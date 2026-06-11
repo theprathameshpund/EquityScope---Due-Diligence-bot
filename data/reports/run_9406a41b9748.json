@@ -1,0 +1,293 @@
+{
+  "company": {
+    "name": "NVIDIA CORP",
+    "ticker": "NVDA",
+    "cik": "1045810",
+    "exchange": "",
+    "sector": ""
+  },
+  "executive_summary": [],
+  "business_overview": [],
+  "financial_health": {
+    "table": {
+      "metrics": [
+        {
+          "metric_id": "revenue_cagr_3y",
+          "name": "Revenue CAGR FY2019->FY2022",
+          "value": 31.95,
+          "unit": "%",
+          "period": "FY2019-FY2022",
+          "inputs": {
+            "revenue_fy2019": 11716000000.0,
+            "revenue_fy2022": 26914000000.0
+          },
+          "formula": "((end/begin)^(1/3) - 1) * 100"
+        },
+        {
+          "metric_id": "revenue_growth_yoy",
+          "name": "Revenue growth FY2021->FY2022",
+          "value": 61.4,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "revenue_fy2021": 16675000000.0,
+            "revenue_fy2022": 26914000000.0
+          },
+          "formula": "(latest/prev - 1) * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2019",
+          "name": "Gross Margin FY2019",
+          "value": 61.21,
+          "unit": "%",
+          "period": "FY2019",
+          "inputs": {
+            "numerator": 7171000000.0,
+            "revenue": 11716000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2020",
+          "name": "Gross Margin FY2020",
+          "value": 61.99,
+          "unit": "%",
+          "period": "FY2020",
+          "inputs": {
+            "numerator": 6768000000.0,
+            "revenue": 10918000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2021",
+          "name": "Gross Margin FY2021",
+          "value": 62.34,
+          "unit": "%",
+          "period": "FY2021",
+          "inputs": {
+            "numerator": 10396000000.0,
+            "revenue": 16675000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2022",
+          "name": "Gross Margin FY2022",
+          "value": 64.93,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 17475000000.0,
+            "revenue": 26914000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_trend_bps",
+          "name": "Gross Margin YoY change",
+          "value": 258.4,
+          "unit": "bps",
+          "period": "FY2021->FY2022",
+          "inputs": {
+            "margin_fy2021": 62.3448275862069,
+            "margin_fy2022": 64.92903321691314
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2019",
+          "name": "Operating Margin FY2019",
+          "value": 32.47,
+          "unit": "%",
+          "period": "FY2019",
+          "inputs": {
+            "numerator": 3804000000.0,
+            "revenue": 11716000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2020",
+          "name": "Operating Margin FY2020",
+          "value": 26.07,
+          "unit": "%",
+          "period": "FY2020",
+          "inputs": {
+            "numerator": 2846000000.0,
+            "revenue": 10918000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2021",
+          "name": "Operating Margin FY2021",
+          "value": 27.18,
+          "unit": "%",
+          "period": "FY2021",
+          "inputs": {
+            "numerator": 4532000000.0,
+            "revenue": 16675000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2022",
+          "name": "Operating Margin FY2022",
+          "value": 37.31,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 10041000000.0,
+            "revenue": 26914000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_trend_bps",
+          "name": "Operating Margin YoY change",
+          "value": 1012.9,
+          "unit": "bps",
+          "period": "FY2021->FY2022",
+          "inputs": {
+            "margin_fy2021": 27.178410794602698,
+            "margin_fy2022": 37.307720888756776
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2019",
+          "name": "Net Margin FY2019",
+          "value": 35.34,
+          "unit": "%",
+          "period": "FY2019",
+          "inputs": {
+            "numerator": 4141000000.0,
+            "revenue": 11716000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2020",
+          "name": "Net Margin FY2020",
+          "value": 25.61,
+          "unit": "%",
+          "period": "FY2020",
+          "inputs": {
+            "numerator": 2796000000.0,
+            "revenue": 10918000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2021",
+          "name": "Net Margin FY2021",
+          "value": 25.98,
+          "unit": "%",
+          "period": "FY2021",
+          "inputs": {
+            "numerator": 4332000000.0,
+            "revenue": 16675000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2022",
+          "name": "Net Margin FY2022",
+          "value": 36.23,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 9752000000.0,
+            "revenue": 26914000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_trend_bps",
+          "name": "Net Margin YoY change",
+          "value": 1025.5,
+          "unit": "bps",
+          "period": "FY2021->FY2022",
+          "inputs": {
+            "margin_fy2021": 25.979010494752625,
+            "margin_fy2022": 36.23393029649996
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "debt_to_ebitda",
+          "name": "Total debt / EBITDA FY2026",
+          "value": 0.06,
+          "unit": "x",
+          "period": "FY2026",
+          "inputs": {
+            "long_term_debt": 7469000000.0,
+            "long_term_debt_current": 999000000.0,
+            "operating_income": 130387000000.0,
+            "depreciation_amortization": 2843000000.0
+          },
+          "formula": "(lt_debt + lt_debt_current) / (op_income + d_and_a)"
+        },
+        {
+          "metric_id": "current_ratio",
+          "name": "Current ratio FY2026",
+          "value": 3.91,
+          "unit": "x",
+          "period": "FY2026",
+          "inputs": {
+            "assets_current": 125605000000.0,
+            "liabilities_current": 32163000000.0
+          },
+          "formula": "assets_current / liabilities_current"
+        },
+        {
+          "metric_id": "fcf",
+          "name": "Free cash flow FY2012",
+          "value": 770421000.0,
+          "unit": "USD",
+          "period": "FY2012",
+          "inputs": {
+            "operating_cash_flow": 909156000.0,
+            "capex": 138735000.0
+          },
+          "formula": "operating_cash_flow - capex"
+        },
+        {
+          "metric_id": "share_dilution",
+          "name": "Diluted share count change FY2023->FY2026",
+          "value": -2.22,
+          "unit": "%",
+          "period": "FY2023-FY2026",
+          "inputs": {
+            "shares_fy2023": 25070000000.0,
+            "shares_fy2026": 24514000000.0
+          },
+          "formula": "(shares_end / shares_begin - 1) * 100"
+        }
+      ]
+    },
+    "commentary": []
+  },
+  "risk_matrix": [],
+  "recent_developments": [],
+  "red_flags": [],
+  "data_gaps": [
+    "Report prose unavailable (writer LLM failed): Error code: 429 - {'error': {'message': 'Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kqh1emvneptrgm5z30raq6jb` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 96750, Requested 8991. Please try again "
+  ],
+  "metadata": {
+    "run_id": "run_9406a41b9748",
+    "generated_at": "2026-06-11T13:59:36.062982Z",
+    "duration_s": 732.0,
+    "tokens_used": 16787,
+    "cost_usd": 0.000871,
+    "model_versions": {
+      "fast": "llama-3.1-8b-instant",
+      "smart": "llama-3.3-70b-versatile",
+      "writer": "llama-3.3-70b-versatile",
+      "embeddings": "BAAI/bge-large-en-v1.5",
+      "nli": "cross-encoder/nli-deberta-v3-base"
+    },
+    "warnings": []
+  }
+}

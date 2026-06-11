@@ -29,7 +29,9 @@ def _suggest_peers(router: LLMRouter, state: AgentState) -> list[str]:
         company=state.company_name, ticker=state.ticker
     )
     try:
-        result = router.complete_json("fast", system, "List the 3 peer tickers.", _Peers)
+        result = router.complete_json(
+            "fast", system, "List the 3 peer tickers.", _Peers, max_tokens=80
+        )
     except ValueError:
         return []
     cleaned = [t.strip().upper() for t in result.tickers if t.strip()]

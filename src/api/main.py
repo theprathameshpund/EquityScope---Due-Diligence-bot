@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -19,10 +20,37 @@ from src.logging_setup import get_logger, setup_logging
 log = get_logger(__name__)
 
 
+async def _fail_orphaned_runs() -> None:
+    """Runs execute in this process; anything still 'running' at startup was
+    killed by a restart. Mark it failed so the UI never waits forever."""
+    try:
+        client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            async for key in client.scan_iter("equityscope:run:*"):
+                raw = await client.get(key)
+                if raw is None:
+                    continue
+                data = json.loads(raw)
+                if data.get("status") == "running":
+                    run_id = str(data.get("run_id", ""))
+                    data["status"] = "failed"
+                    data["error"] = (
+                        "API restarted while this run was in progress. Resume it with: "
+                        f"python -m src.agents.orchestrator --resume {run_id}"
+                    )
+                    await client.set(key, json.dumps(data), ex=7 * 24 * 3600)
+                    log.warning("orphaned_run_marked_failed", run_id=run_id)
+        finally:
+            await client.aclose()
+    except Exception as exc:
+        log.warning("orphaned_run_scan_failed", error=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     log.info("api_starting", environment=settings.environment)
+    await _fail_orphaned_runs()
     yield
     log.info("api_stopped")
 

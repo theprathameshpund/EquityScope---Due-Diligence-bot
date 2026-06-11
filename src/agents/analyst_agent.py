@@ -35,7 +35,9 @@ def _write_commentary(
     }
     system = load_prompt("analyst_commentary").format(company=state.company_name)
     try:
-        result = router.complete_json("smart", system, json.dumps(payload), _Commentary)
+        result = router.complete_json(
+            "smart", system, json.dumps(payload), _Commentary, max_tokens=1500
+        )
     except ValueError as exc:
         log.warning("analyst_commentary_failed", error=str(exc))
         return []

@@ -79,6 +79,20 @@ def test_pacer_disabled_never_blocks() -> None:
     assert time.monotonic() - start < 0.5
 
 
+def test_quota_exhausted_detection() -> None:
+    from src.llm.router import _is_quota_exhausted
+
+    tpd = RuntimeError(
+        "Error code: 429 - {'error': {'message': 'Rate limit reached ... "
+        "tokens per day (TPD): Limit 100000', 'code': 'rate_limit_exceeded'}}"
+    )
+    too_large = RuntimeError("Error code: 413 - request too large for model")
+    transient = RuntimeError("Connection error.")
+    assert _is_quota_exhausted(tpd)
+    assert _is_quota_exhausted(too_large)
+    assert not _is_quota_exhausted(transient)
+
+
 def test_extract_json_strips_fences() -> None:
     assert _extract_json('{"a": 1}') == '{"a": 1}'
     assert _extract_json('```json\n{"a": 1}\n```') == '{"a": 1}'

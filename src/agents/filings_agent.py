@@ -38,7 +38,7 @@ def _generate_questions(router: LLMRouter, state: AgentState) -> list[str]:
         company=state.company_name, ticker=state.ticker, focus=state.focus or "general"
     )
     result = router.complete_json(
-        "fast", system, "Generate the research questions.", _Questions
+        "fast", system, "Generate the research questions.", _Questions, max_tokens=600
     )
     questions = [q.strip() for q in result.questions if q.strip()]
     return questions[:8] if len(questions) > 8 else questions
@@ -47,7 +47,9 @@ def _generate_questions(router: LLMRouter, state: AgentState) -> list[str]:
 def _rewrite_query(router: LLMRouter, question: str, hint: str = "") -> str:
     user = question if not hint else f"{question}\n\nNote: {hint}"
     try:
-        result = router.complete_json("fast", load_prompt("query_rewrite"), user, _Rewrite)
+        result = router.complete_json(
+            "fast", load_prompt("query_rewrite"), user, _Rewrite, max_tokens=120
+        )
     except ValueError:
         return question
     return result.query.strip() or question
@@ -63,7 +65,9 @@ def _grade_relevance(
     )
     user = f"Question: {question}\n\nPassages:\n{numbered}"
     try:
-        result = router.complete_json("fast", load_prompt("relevance_grade"), user, _Grades)
+        result = router.complete_json(
+            "fast", load_prompt("relevance_grade"), user, _Grades, max_tokens=150
+        )
     except ValueError:
         log.warning("relevance_grading_failed_keeping_all", question=question)
         return candidates

@@ -194,7 +194,7 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
         )
         try:
             revision = router.complete_json(
-                "writer", load_prompt("writer_revision"), user, _Revision
+                "writer", load_prompt("writer_revision"), user, _Revision, max_tokens=500
             )
         except ValueError as exc:
             log.warning("revision_failed_dropping_claim", claim_id=claim.claim_id,

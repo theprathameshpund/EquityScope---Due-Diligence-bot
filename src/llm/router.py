@@ -145,6 +145,15 @@ def load_prompt(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _is_quota_exhausted(exc: BaseException) -> bool:
+    """Provider quota errors that retrying cannot fix inside one run —
+    daily token caps (TPD) or requests too large for the per-minute window."""
+    message = str(exc)
+    return "rate_limit_exceeded" in message or "Error code: 429" in message or (
+        "Error code: 413" in message
+    )
+
+
 def _is_retryable(exc: BaseException) -> bool:
     name = type(exc).__name__
     return name in {
@@ -215,23 +224,45 @@ class LLMRouter:
                 f"({self.tracker.tokens_used}/{self.tracker.token_limit})"
             )
         provider, model, price_tier = _route(tier)
-        pacer = _get_pacer(provider, price_tier)
         # Conservative estimate: full prompt plus the entire output allowance.
         estimated_tokens = _approx_tokens(system + user) + max_tokens
 
-        @retry(
-            stop=stop_after_attempt(settings.llm_max_retries + 1),
-            wait=wait_exponential(multiplier=1, max=20),
-            retry=retry_if_exception(_is_retryable),
-            reraise=True,
-        )
-        def _call() -> tuple[str, int, int]:
-            pacer.acquire(estimated_tokens)
-            if provider == "anthropic":
-                return self._call_anthropic(model, system, user, max_tokens, temperature)
-            return self._call_groq(model, system, user, json_mode, max_tokens, temperature)
+        def _paced_call(prov: str, mdl: str, tier_name: str) -> tuple[str, int, int]:
+            @retry(
+                stop=stop_after_attempt(settings.llm_max_retries + 1),
+                wait=wait_exponential(multiplier=1, max=20),
+                retry=retry_if_exception(_is_retryable),
+                reraise=True,
+            )
+            def _call() -> tuple[str, int, int]:
+                _get_pacer(prov, tier_name).acquire(estimated_tokens)
+                if prov == "anthropic":
+                    return self._call_anthropic(mdl, system, user, max_tokens, temperature)
+                return self._call_groq(mdl, system, user, json_mode, max_tokens, temperature)
 
-        text, in_tok, out_tok = _call()
+            return _call()
+
+        try:
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
+        except Exception as exc:
+            # Daily-quota exhaustion on the smart Groq model cannot be waited
+            # out within a run — degrade to the fast model (separate, much
+            # larger daily quota) rather than losing the report prose.
+            can_fall_back = (
+                provider == "groq"
+                and model != settings.groq_model_fast
+                and _is_quota_exhausted(exc)
+            )
+            if not can_fall_back:
+                raise
+            log.warning(
+                "smart_model_quota_exhausted_falling_back_to_fast",
+                tier=tier,
+                model=model,
+                error=str(exc)[:200],
+            )
+            provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
         price_in, price_out = settings.model_price_per_million(provider, price_tier)
         cost = in_tok / 1_000_000 * price_in + out_tok / 1_000_000 * price_out
         self.tracker.add(in_tok, out_tok, cost)
@@ -312,7 +343,7 @@ class LLMRouter:
         user: str,
         schema: type[T],
         *,
-        max_tokens: int = 4096,
+        max_tokens: int = 1024,
         temperature: float = 0.1,
     ) -> T:
         """Completion parsed into a Pydantic model, with validation retries."""

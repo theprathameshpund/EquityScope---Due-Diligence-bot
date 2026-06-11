@@ -51,7 +51,9 @@ def news_node(state: AgentState) -> dict[str, Any]:
                 for i, item in enumerate(items)
             )
             system = load_prompt("news_sentiment").format(company=state.company_name)
-            result = router.complete_json("fast", system, numbered, _Sentiments)
+            result = router.complete_json(
+                "fast", system, numbered, _Sentiments, max_tokens=200
+            )
             for i, item in enumerate(items):
                 if i < len(result.labels):
                     label = result.labels[i].strip().lower()
