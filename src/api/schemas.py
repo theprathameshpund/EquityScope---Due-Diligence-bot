@@ -27,6 +27,19 @@ class ReportStatusResponse(BaseModel):
     error: str | None = None
 
 
+class RunSummary(BaseModel):
+    run_id: str
+    status: str
+    company: str = ""
+    updated_at: str = ""
+    cost_usd: float | None = None
+    tokens_used: int | None = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunSummary]
+
+
 class HealthResponse(BaseModel):
     status: str
     qdrant: bool

@@ -30,3 +30,9 @@ evals/results/*
 Thumbs.db
 .idea/
 .vscode/
+
+# Angular
+frontend-angular/node_modules/
+frontend-angular/dist/
+frontend-angular/.angular/
+

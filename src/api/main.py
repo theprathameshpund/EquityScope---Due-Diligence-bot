@@ -9,8 +9,10 @@ from contextlib import asynccontextmanager
 
 import psycopg
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from src.api.routes import router
 from src.api.schemas import HealthResponse
@@ -62,12 +64,23 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    configured_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.environment == "development" else [],
+        allow_origins=["*"] if settings.environment == "development" else configured_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(GZipMiddleware, minimum_size=2048)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        log.error("unhandled_api_error", path=str(request.url.path), error=str(exc))
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "path": str(request.url.path)},
+        )
+
     app.include_router(router)
 
     @app.get("/healthz", response_model=HealthResponse)

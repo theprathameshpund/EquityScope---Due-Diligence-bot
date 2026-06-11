@@ -20,7 +20,13 @@ from src.agents.orchestrator import (
     run_report,
     save_report,
 )
-from src.api.schemas import CreateReportRequest, CreateReportResponse, ReportStatusResponse
+from src.api.schemas import (
+    CreateReportRequest,
+    CreateReportResponse,
+    ReportStatusResponse,
+    RunListResponse,
+    RunSummary,
+)
 from src.config import settings
 from src.logging_setup import get_logger
 from src.state import new_id
@@ -70,6 +76,37 @@ async def create_report(
     background.add_task(asyncio.to_thread, _execute_run, run_id, payload.company, payload.focus)
     log.info("run_queued", run_id=run_id, company=payload.company, ip=client_ip)
     return CreateReportResponse(run_id=run_id, status="queued")
+
+
+@router.get("/reports", response_model=RunListResponse)
+async def list_reports() -> RunListResponse:
+    """Recent runs (newest first) so the UI can reopen past reports."""
+    client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    runs: list[RunSummary] = []
+    try:
+        async for key in client.scan_iter("equityscope:run:*"):
+            raw = await client.get(key)
+            if raw is None:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            metadata = (data.get("report") or {}).get("metadata") or {}
+            runs.append(
+                RunSummary(
+                    run_id=str(data.get("run_id", "")),
+                    status=str(data.get("status", "unknown")),
+                    company=str(data.get("company", "")),
+                    updated_at=str(data.get("updated_at", "")),
+                    cost_usd=metadata.get("cost_usd"),
+                    tokens_used=metadata.get("tokens_used"),
+                )
+            )
+    finally:
+        await client.aclose()
+    runs.sort(key=lambda r: r.updated_at, reverse=True)
+    return RunListResponse(runs=runs[:50])
 
 
 @router.get("/reports/{run_id}", response_model=ReportStatusResponse)

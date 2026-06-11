@@ -101,7 +101,12 @@ def store_run_status(
     client = _redis()
     if client is None:
         return
-    payload: dict[str, Any] = {"run_id": run_id, "status": status, "company": company}
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "status": status,
+        "company": company,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
     if report is not None:
         payload["report"] = report.model_dump(mode="json")
         payload["markdown"] = render_markdown(report)

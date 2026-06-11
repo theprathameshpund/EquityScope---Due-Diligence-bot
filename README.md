@@ -105,14 +105,21 @@ Path("data/ca_bundle.pem").write_text("\n".join(parts), encoding="utf-8")
 
 ```powershell
 # API (FastAPI)
-.\.venv\Scripts\python.exe -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn src.api.main:app --host 127.0.0.1 --port 8200
 
-# Frontend (Streamlit) — second terminal
-.\.venv\Scripts\python.exe -m streamlit run frontend/app.py --server.port 8501
+# Frontend (Angular) — second terminal; proxies /api to the FastAPI port
+cd frontend-angular
+npm install        # first time only
+npx ng serve --port 4200
 ```
 
-Open http://localhost:8501, enter a ticker, watch the agent timeline, expand
-citations in the finished report. Health check: http://localhost:8000/healthz
+Open http://localhost:4200 — enter a ticker, watch the live agent timeline
+(SSE), browse recent runs in the sidebar, expand citations (source chunk text
++ EDGAR link) in the finished report, download Markdown/JSON.
+Health check: http://localhost:8200/healthz
+
+The legacy Streamlit UI remains available:
+`.\.venv\Scripts\python.exe -m streamlit run frontend/app.py --server.port 8501`
 
 ### CLI usage (no UI)
 
@@ -220,7 +227,8 @@ src/
 ├── memory/            # Postgres checkpointer
 ├── report/            # DDReport schema + Markdown renderer
 └── api/               # FastAPI app, routes, SSE
-frontend/app.py        # Streamlit UI
+frontend-angular/      # Angular UI (run form, SSE timeline, report + citations, runs list)
+frontend/app.py        # legacy Streamlit UI
 evals/                 # numeric / faithfulness / retrieval evals + golden set
 tests/                 # unit + integration (mocked LLM, recorded fixtures)
 scripts/infra_wsl.sh   # no-Docker infra: Redis + Postgres + Qdrant in WSL

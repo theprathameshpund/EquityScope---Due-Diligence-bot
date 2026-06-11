@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     frontend_port: int = 8501
+    cors_origins: str = "http://localhost:4200,http://127.0.0.1:4200"
+    """Comma-separated allowed origins for the browser frontend."""
     log_level: str = "INFO"
     environment: Literal["development", "production"] = "development"
 
