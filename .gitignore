@@ -1,0 +1,32 @@
+# Secrets / local config
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data & artifacts (keep directory markers)
+data/filings/*
+!data/filings/.gitkeep
+evals/results/*
+!evals/results/.gitkeep
+
+# Model caches
+.cache/
+*.safetensors
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
