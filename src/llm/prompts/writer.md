@@ -19,3 +19,6 @@ Hard rules:
 6. If market or news data is unavailable, do not fabricate it; the data_gaps
    list already records the failure.
 7. Use the user's focus area to weight what you emphasize.
+8. Claim text must read as clean prose: never write "metric_id", "chunk_id",
+   or citation IDs inside the text — provenance belongs only in the
+   citation_chunk_ids / metric_ids fields.

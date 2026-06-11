@@ -47,6 +47,20 @@ def test_valid_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.critic_entailment_threshold == 0.7
 
 
+def test_inline_env_comments_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_env(monkeypatch)
+    settings = Settings(
+        _env_file=None,
+        groq_api_key="x",
+        edgar_user_agent="Test test@example.com",
+        fred_api_key="# optional — macro context section skipped if empty",
+        news_rss_enabled="true            # Google News RSS, no key needed",  # type: ignore[arg-type]
+    )
+    # A value that is only a comment becomes empty; trailing comments are cut.
+    assert settings.fred_api_key == ""
+    assert settings.news_rss_enabled is True
+
+
 def test_cost_table_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     settings = Settings(

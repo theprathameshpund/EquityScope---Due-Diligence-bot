@@ -26,7 +26,11 @@ from src.state import AgentState, Claim, RetrievedEvidence
 
 log = get_logger(__name__)
 
-_MAX_EVIDENCE_CHARS = 900
+# Sized so the full writer request (prompt + schema + output allowance) stays
+# under Groq's free-tier 12k tokens-per-minute limit for the smart model.
+_MAX_EVIDENCE_CHARS = 700
+_MAX_EVIDENCE_CHUNKS = 16
+_WRITER_MAX_TOKENS = 4000
 
 
 class _WClaim(BaseModel):
@@ -58,10 +62,11 @@ class _Revision(BaseModel):
 
 
 def _evidence_block(evidence: list[RetrievedEvidence]) -> str:
+    best = sorted(evidence, key=lambda e: e.score, reverse=True)[:_MAX_EVIDENCE_CHUNKS]
     lines = [
         f"chunk_id={e.chunk_id} [{e.form_type} {e.fiscal_period} — {e.section}]\n"
         f"{e.text[:_MAX_EVIDENCE_CHARS]}"
-        for e in evidence
+        for e in best
     ]
     return "\n\n---\n\n".join(lines) if lines else "(no filing evidence retrieved)"
 
@@ -121,7 +126,9 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
         f"EVIDENCE:\n{_evidence_block(state.evidence)}\n\n"
         f"STRUCTURED DATA:\n{_context_payload(state)}"
     )
-    output = router.complete_json("writer", system, user, _WriterOutput, max_tokens=8000)
+    output = router.complete_json(
+        "writer", system, user, _WriterOutput, max_tokens=_WRITER_MAX_TOKENS
+    )
 
     valid_metric_ids = (
         {m.metric_id for m in state.analysis.metrics} if state.analysis else set()
@@ -211,11 +218,37 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
     return report
 
 
+def _partial_report(state: AgentState, reason: str) -> DDReport:
+    """Metrics-only report when the writer LLM is unavailable — the run still
+    ships its deterministic content rather than failing outright."""
+    return DDReport(
+        company=CompanyMeta(
+            name=state.company_name or state.company_input,
+            ticker=state.ticker,
+            cik=state.cik,
+        ),
+        financial_health=FinancialHealthSection(
+            table=MetricsTable(metrics=state.analysis.metrics if state.analysis else []),
+            commentary=list(state.analysis.commentary) if state.analysis else [],
+        ),
+        data_gaps=[*state.data_gaps, f"Report prose unavailable (writer LLM failed): {reason}"],
+        metadata=ReportMetadata(run_id=state.run_id),
+    )
+
+
 def writer_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node: write the report, or revise critic-rejected claims."""
     router = LLMRouter(state.run_id)
     if state.report is None:
-        report = _full_write(router, state)
+        try:
+            report = _full_write(router, state)
+        except Exception as exc:
+            log.error("writer_failed_shipping_partial", error=str(exc)[:300])
+            return {
+                "report": _partial_report(state, str(exc)[:200]),
+                "status": "written_partial",
+                "data_gaps": [f"Report prose unavailable (writer LLM failed): {exc}"[:300]],
+            }
         log.info("report_written", claims=len(report.all_claims()))
         return {"report": report, "status": "written"}
 

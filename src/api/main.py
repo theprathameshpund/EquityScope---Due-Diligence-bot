@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -52,12 +53,15 @@ def create_app() -> FastAPI:
                 qdrant_ok = resp.status_code == 200
         except Exception as exc:
             log.warning("healthz_qdrant_failed", error=str(exc))
+        def _check_postgres() -> bool:
+            # Sync connect in a thread: psycopg async mode is incompatible
+            # with the Proactor event loop uvicorn uses on Windows.
+            with psycopg.connect(settings.postgres_dsn, connect_timeout=3) as conn:
+                conn.execute("SELECT 1")
+            return True
+
         try:
-            async with await psycopg.AsyncConnection.connect(
-                settings.postgres_dsn, connect_timeout=3
-            ) as conn:
-                await conn.execute("SELECT 1")
-                postgres_ok = True
+            postgres_ok = await asyncio.to_thread(_check_postgres)
         except Exception as exc:
             log.warning("healthz_postgres_failed", error=str(exc))
         try:

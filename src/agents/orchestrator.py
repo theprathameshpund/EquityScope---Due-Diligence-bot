@@ -35,7 +35,7 @@ from src.memory.checkpoints import get_checkpointer
 from src.rag.ingestion import ingest_company
 from src.report.render import render_markdown
 from src.report.schema import CompanyMeta, DDReport, ReportMetadata
-from src.state import AgentState, ProgressEvent, RunBudget, new_id
+from src.state import AgentState, ProgressEvent, RetrievedEvidence, RunBudget, new_id
 
 log = get_logger(__name__)
 
@@ -96,6 +96,7 @@ def store_run_status(
     company: str = "",
     report: DDReport | None = None,
     error: str | None = None,
+    evidence: list[RetrievedEvidence] | None = None,
 ) -> None:
     client = _redis()
     if client is None:
@@ -104,6 +105,9 @@ def store_run_status(
     if report is not None:
         payload["report"] = report.model_dump(mode="json")
         payload["markdown"] = render_markdown(report)
+    if evidence:
+        # Cited chunks ride along so the UI can show source text + EDGAR link.
+        payload["evidence"] = [e.model_dump(mode="json") for e in evidence]
     if error:
         payload["error"] = error
     try:
@@ -287,7 +291,8 @@ def run_report(
 
     report = final.get("report")
     assert report is None or isinstance(report, DDReport)
-    store_run_status(rid, "done", company=company, report=report)
+    evidence = [e for e in final.get("evidence", []) if isinstance(e, RetrievedEvidence)]
+    store_run_status(rid, "done", company=company, report=report, evidence=evidence)
     publish_event(rid, "run", "done", message="Report ready")
     return rid, report
 

@@ -1,0 +1,450 @@
+{
+  "company": {
+    "name": "Apple Inc.",
+    "ticker": "AAPL",
+    "cik": "320193",
+    "exchange": "",
+    "sector": ""
+  },
+  "executive_summary": [
+    {
+      "claim_id": "clm_2e69cc876832",
+      "text": "The company's revenue has grown at a compound annual growth rate of 1.81% from FY2022 to FY2025, as calculated by metric_id=revenue_cagr_3y.",
+      "citation_chunk_ids": [],
+      "metric_ids": [
+        "revenue_cagr_3y"
+      ],
+      "verification_status": "supported",
+      "section": "executive_summary"
+    }
+  ],
+  "business_overview": [
+    {
+      "claim_id": "clm_c18a5548088a",
+      "text": "The Company designs, manufactures and markets smartphones, personal computers, tablets, wearables and accessories, and sells a variety of related services.",
+      "citation_chunk_ids": [
+        "chk_66a7752b6225a144"
+      ],
+      "metric_ids": [],
+      "verification_status": "supported",
+      "section": "business_overview"
+    }
+  ],
+  "financial_health": {
+    "table": {
+      "metrics": [
+        {
+          "metric_id": "revenue_cagr_3y",
+          "name": "Revenue CAGR FY2022->FY2025",
+          "value": 1.81,
+          "unit": "%",
+          "period": "FY2022-FY2025",
+          "inputs": {
+            "revenue_fy2022": 394328000000.0,
+            "revenue_fy2025": 416161000000.0
+          },
+          "formula": "((end/begin)^(1/3) - 1) * 100"
+        },
+        {
+          "metric_id": "revenue_growth_yoy",
+          "name": "Revenue growth FY2024->FY2025",
+          "value": 6.43,
+          "unit": "%",
+          "period": "FY2025",
+          "inputs": {
+            "revenue_fy2024": 391035000000.0,
+            "revenue_fy2025": 416161000000.0
+          },
+          "formula": "(latest/prev - 1) * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2022",
+          "name": "Gross Margin FY2022",
+          "value": 43.31,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 170782000000.0,
+            "revenue": 394328000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2023",
+          "name": "Gross Margin FY2023",
+          "value": 44.13,
+          "unit": "%",
+          "period": "FY2023",
+          "inputs": {
+            "numerator": 169148000000.0,
+            "revenue": 383285000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2024",
+          "name": "Gross Margin FY2024",
+          "value": 46.21,
+          "unit": "%",
+          "period": "FY2024",
+          "inputs": {
+            "numerator": 180683000000.0,
+            "revenue": 391035000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_fy2025",
+          "name": "Gross Margin FY2025",
+          "value": 46.91,
+          "unit": "%",
+          "period": "FY2025",
+          "inputs": {
+            "numerator": 195201000000.0,
+            "revenue": 416161000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "gross_margin_trend_bps",
+          "name": "Gross Margin YoY change",
+          "value": 69.9,
+          "unit": "bps",
+          "period": "FY2024->FY2025",
+          "inputs": {
+            "margin_fy2024": 46.206349815233935,
+            "margin_fy2025": 46.90516410716045
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2022",
+          "name": "Operating Margin FY2022",
+          "value": 30.29,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 119437000000.0,
+            "revenue": 394328000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2023",
+          "name": "Operating Margin FY2023",
+          "value": 29.82,
+          "unit": "%",
+          "period": "FY2023",
+          "inputs": {
+            "numerator": 114301000000.0,
+            "revenue": 383285000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2024",
+          "name": "Operating Margin FY2024",
+          "value": 31.51,
+          "unit": "%",
+          "period": "FY2024",
+          "inputs": {
+            "numerator": 123216000000.0,
+            "revenue": 391035000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_fy2025",
+          "name": "Operating Margin FY2025",
+          "value": 31.97,
+          "unit": "%",
+          "period": "FY2025",
+          "inputs": {
+            "numerator": 133050000000.0,
+            "revenue": 416161000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "operating_margin_trend_bps",
+          "name": "Operating Margin YoY change",
+          "value": 46.1,
+          "unit": "bps",
+          "period": "FY2024->FY2025",
+          "inputs": {
+            "margin_fy2024": 31.510222870075566,
+            "margin_fy2025": 31.970799762591884
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2022",
+          "name": "Net Margin FY2022",
+          "value": 25.31,
+          "unit": "%",
+          "period": "FY2022",
+          "inputs": {
+            "numerator": 99803000000.0,
+            "revenue": 394328000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2023",
+          "name": "Net Margin FY2023",
+          "value": 25.31,
+          "unit": "%",
+          "period": "FY2023",
+          "inputs": {
+            "numerator": 96995000000.0,
+            "revenue": 383285000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2024",
+          "name": "Net Margin FY2024",
+          "value": 23.97,
+          "unit": "%",
+          "period": "FY2024",
+          "inputs": {
+            "numerator": 93736000000.0,
+            "revenue": 391035000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_fy2025",
+          "name": "Net Margin FY2025",
+          "value": 26.92,
+          "unit": "%",
+          "period": "FY2025",
+          "inputs": {
+            "numerator": 112010000000.0,
+            "revenue": 416161000000.0
+          },
+          "formula": "numerator / revenue * 100"
+        },
+        {
+          "metric_id": "net_margin_trend_bps",
+          "name": "Net Margin YoY change",
+          "value": 294.4,
+          "unit": "bps",
+          "period": "FY2024->FY2025",
+          "inputs": {
+            "margin_fy2024": 23.971255769943866,
+            "margin_fy2025": 26.91506412181824
+          },
+          "formula": "(margin_latest - margin_prev) * 100"
+        },
+        {
+          "metric_id": "debt_to_ebitda",
+          "name": "Total debt / EBITDA FY2025",
+          "value": 0.63,
+          "unit": "x",
+          "period": "FY2025",
+          "inputs": {
+            "long_term_debt": 78328000000.0,
+            "long_term_debt_current": 12350000000.0,
+            "operating_income": 133050000000.0,
+            "depreciation_amortization": 11698000000.0
+          },
+          "formula": "(lt_debt + lt_debt_current) / (op_income + d_and_a)"
+        },
+        {
+          "metric_id": "current_ratio",
+          "name": "Current ratio FY2025",
+          "value": 0.89,
+          "unit": "x",
+          "period": "FY2025",
+          "inputs": {
+            "assets_current": 147957000000.0,
+            "liabilities_current": 165631000000.0
+          },
+          "formula": "assets_current / liabilities_current"
+        },
+        {
+          "metric_id": "fcf",
+          "name": "Free cash flow FY2025",
+          "value": 98767000000.0,
+          "unit": "USD",
+          "period": "FY2025",
+          "inputs": {
+            "operating_cash_flow": 111482000000.0,
+            "capex": 12715000000.0
+          },
+          "formula": "operating_cash_flow - capex"
+        },
+        {
+          "metric_id": "fcf_margin",
+          "name": "FCF margin FY2025",
+          "value": 23.73,
+          "unit": "%",
+          "period": "FY2025",
+          "inputs": {
+            "fcf": 98767000000.0,
+            "revenue": 416161000000.0
+          },
+          "formula": "fcf / revenue * 100"
+        },
+        {
+          "metric_id": "share_dilution",
+          "name": "Diluted share count change FY2022->FY2025",
+          "value": -8.09,
+          "unit": "%",
+          "period": "FY2022-FY2025",
+          "inputs": {
+            "shares_fy2022": 16325819000.0,
+            "shares_fy2025": 15004697000.0
+          },
+          "formula": "(shares_end / shares_begin - 1) * 100"
+        }
+      ]
+    },
+    "commentary": [
+      {
+        "claim_id": "clm_7232a3883065",
+        "text": "The company's gross margin has increased from 43.31% in FY2022 to 46.91% in FY2025, as calculated by metrics gross_margin_fy2022 and gross_margin_fy2025.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "gross_margin_fy2022",
+          "gross_margin_fy2025"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_8a10180b6700",
+        "text": "Apple Inc.'s revenue growth has been steady, with a compound annual growth rate of 1.81% from FY2022 to FY2025, as indicated by revenue_cagr_3y, and a year-over-year growth rate of 6.43% from FY2024 to FY2025, as shown by revenue_growth_yoy.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "revenue_cagr_3y",
+          "revenue_growth_yoy"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_8ba817552ced",
+        "text": "The company's gross margin has been increasing, with values of 43.31%, 44.13%, 46.21%, and 46.91% for FY2022, FY2023, FY2024, and FY2025 respectively, as indicated by gross_margin_fy2022, gross_margin_fy2023, gross_margin_fy2024, and gross_margin_fy2025, and a year-over-year change of 69.9 basis points from FY2024 to FY2025, as shown by gross_margin_trend_bps.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "gross_margin_fy2022",
+          "gross_margin_fy2023",
+          "gross_margin_fy2024",
+          "gross_margin_fy2025",
+          "gross_margin_trend_bps"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_d203c04b6e58",
+        "text": "Operating margins have also shown a positive trend, with values of 30.29%, 29.82%, 31.51%, and 31.97% for FY2022, FY2023, FY2024, and FY2025 respectively, as indicated by operating_margin_fy2022, operating_margin_fy2023, operating_margin_fy2024, and operating_margin_fy2025, and a year-over-year change of 46.1 basis points from FY2024 to FY2025, as shown by operating_margin_trend_bps.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "operating_margin_fy2022",
+          "operating_margin_fy2023",
+          "operating_margin_fy2024",
+          "operating_margin_fy2025",
+          "operating_margin_trend_bps"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_281898d08ea2",
+        "text": "Net margins have been relatively stable, with values of 25.31%, 25.31%, 23.97%, and 26.92% for FY2022, FY2023, FY2024, and FY2025 respectively, as indicated by net_margin_fy2022, net_margin_fy2023, net_margin_fy2024, and net_margin_fy2025, and a significant year-over-year increase of 294.4 basis points from FY2024 to FY2025, as shown by net_margin_trend_bps.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "net_margin_fy2022",
+          "net_margin_fy2023",
+          "net_margin_fy2024",
+          "net_margin_fy2025",
+          "net_margin_trend_bps"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_d9edb7c0f269",
+        "text": "The company's leverage, as measured by its debt-to-EBITDA ratio of 0.63x in FY2025, as indicated by debt_to_ebitda, and its current ratio of 0.89x in FY2025, as shown by current_ratio, indicates a relatively stable financial position, although the current ratio is below 1.0, which may be a cause for concern.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "debt_to_ebitda",
+          "current_ratio"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      },
+      {
+        "claim_id": "clm_a66522f9c55a",
+        "text": "Apple Inc.'s cash flow generation has been strong, with a free cash flow of $98.77 billion in FY2025, as indicated by fcf, and a free cash flow margin of 23.73%, as shown by fcf_margin.",
+        "citation_chunk_ids": [],
+        "metric_ids": [
+          "fcf",
+          "fcf_margin"
+        ],
+        "verification_status": "supported",
+        "section": "financial_health"
+      }
+    ]
+  },
+  "risk_matrix": [
+    {
+      "title": "Competition Risk",
+      "severity": "high",
+      "likelihood": "high",
+      "claims": []
+    },
+    {
+      "title": "Supply Chain Risk",
+      "severity": "medium",
+      "likelihood": "medium",
+      "claims": []
+    },
+    {
+      "title": "Industrial Accident Risk",
+      "severity": "low",
+      "likelihood": "low",
+      "claims": [
+        {
+          "claim_id": "clm_2c972c50b058",
+          "text": "The company's operations are also subject to the risks of industrial accidents at its suppliers and contract manufacturers. While the company's suppliers are required to maintain safe working environments and operations, an industrial accident could occur and could result in serious injuries or loss of life, disruption to the company's business, and harm to the company's reputation.",
+          "citation_chunk_ids": [
+            "chk_0b21b7b04a03cdb8"
+          ],
+          "metric_ids": [],
+          "verification_status": "supported",
+          "section": "risk_matrix"
+        }
+      ]
+    }
+  ],
+  "recent_developments": [],
+  "red_flags": [],
+  "data_gaps": [
+    "Unverifiable claim dropped after max revisions: Some of the Company's competitors have broad product lines, low-priced products, large installed bases of active devices",
+    "Unverifiable claim dropped after max revisions: The Company faces significant competition as some of its competitors have broad product lines, low-priced products, larg",
+    "Unverifiable claim dropped after max revisions: The Company remains subject to significant risks of the supply of components on similar terms, or at all, and may not be"
+  ],
+  "metadata": {
+    "run_id": "run_12ba9ded23c5",
+    "generated_at": "2026-06-11T13:01:24.615018Z",
+    "duration_s": 315.2,
+    "tokens_used": 31321,
+    "cost_usd": 0.012282,
+    "model_versions": {
+      "fast": "llama-3.1-8b-instant",
+      "smart": "llama-3.3-70b-versatile",
+      "writer": "llama-3.3-70b-versatile",
+      "embeddings": "BAAI/bge-large-en-v1.5",
+      "nli": "cross-encoder/nli-deberta-v3-base"
+    },
+    "warnings": [
+      "Unverifiable claim dropped after max revisions: Some of the Company's competitors have broad product lines, low-priced products, large installed bases of active devices",
+      "Unverifiable claim dropped after max revisions: The Company faces significant competition as some of its competitors have broad product lines, low-priced products, larg",
+      "Unverifiable claim dropped after max revisions: The Company remains subject to significant risks of the supply of components on similar terms, or at all, and may not be"
+    ]
+  }
+}

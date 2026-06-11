@@ -8,11 +8,23 @@ URL, model name, or tuning constant.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
+import truststore
 from pydantic import Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Trust the OS certificate store (corporate TLS-interception proxies install
+# their root CA there, but Python's bundled certifi does not include it).
+truststore.inject_into_ssl()
+
+# curl_cffi (used by yfinance) bypasses Python's ssl module; point it at a
+# PEM bundle of certifi + OS roots when one has been generated (see README).
+_CA_BUNDLE = Path(__file__).resolve().parent.parent / "data" / "ca_bundle.pem"
+if _CA_BUNDLE.exists():
+    os.environ.setdefault("CURL_CA_BUNDLE", str(_CA_BUNDLE))
 
 _REQUIRED_HINTS: dict[str, str] = {
     "GROQ_API_KEY": "create one at https://console.groq.com/keys",
@@ -95,6 +107,22 @@ class Settings(BaseSettings):
 
     # SEC EDGAR hard limit is 10 req/s; we stay at it, never above.
     edgar_max_requests_per_second: int = Field(default=10, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_inline_comments(cls, data: object) -> object:
+        """Drop `value   # comment` tails that dotenv passes through as values."""
+        if not isinstance(data, dict):
+            return data
+        cleaned: dict[object, object] = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                if value.lstrip().startswith("#"):
+                    value = ""
+                elif " #" in value:
+                    value = value.split(" #", 1)[0].rstrip()
+            cleaned[key] = value
+        return cleaned
 
     @model_validator(mode="after")
     def _check_required(self) -> Settings:

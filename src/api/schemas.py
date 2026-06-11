@@ -23,6 +23,7 @@ class ReportStatusResponse(BaseModel):
     company: str = ""
     report: dict[str, Any] | None = None
     markdown: str | None = None
+    evidence: list[dict[str, Any]] | None = None
     error: str | None = None
 
 

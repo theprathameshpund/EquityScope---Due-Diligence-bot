@@ -89,6 +89,7 @@ async def get_report(run_id: str) -> ReportStatusResponse:
         company=str(data.get("company", "")),
         report=data.get("report"),
         markdown=data.get("markdown"),
+        evidence=data.get("evidence"),
         error=data.get("error"),
     )
 

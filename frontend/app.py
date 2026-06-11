@@ -8,12 +8,26 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
 import streamlit as st
 
-API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
+
+def _api_base() -> str:
+    """API base URL: env var, else API_PORT from env or .env, else :8000."""
+    if os.environ.get("API_BASE_URL"):
+        return os.environ["API_BASE_URL"]
+    port = os.environ.get("API_PORT", "")
+    if not port and Path(".env").exists():
+        for line in Path(".env").read_text(encoding="utf-8").splitlines():
+            if line.startswith("API_PORT="):
+                port = line.split("=", 1)[1].split("#")[0].strip()
+    return f"http://localhost:{port or '8000'}"
+
+
+API_BASE = _api_base()
 
 NODE_LABELS = {
     "run": "Run",
@@ -114,7 +128,9 @@ def render_report(data: dict[str, Any]) -> None:
     cols[2].metric("Duration", f"{meta.get('duration_s', 0.0):.0f}s")
     cols[3].metric("Claims", str(_count_claims(report)))
 
-    chunks: dict[str, dict[str, Any]] = {}  # populated if evidence embedded later
+    chunks: dict[str, dict[str, Any]] = {
+        str(e.get("chunk_id")): e for e in (data.get("evidence") or [])
+    }
 
     tab_report, tab_raw = st.tabs(["Report", "Raw JSON"])
     with tab_report:
@@ -182,6 +198,10 @@ def _count_claims(report: dict[str, Any]) -> int:
 
 
 # ── UI ─────────────────────────────────────────────────────────
+
+# Allow opening a past run directly: http://localhost:8501/?run=<run_id>
+if "run" in st.query_params and "run_id" not in st.session_state:
+    st.session_state["run_id"] = st.query_params["run"]
 
 with st.form("run_form"):
     col1, col2 = st.columns([1, 2])

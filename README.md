@@ -79,6 +79,28 @@ wsl -d Ubuntu -u root -- bash "/mnt/c/<path-to-repo>/scripts/infra_wsl.sh"
 docker compose up -d qdrant postgres redis
 ```
 
+### Corporate proxy / TLS interception
+
+If your network re-signs TLS (self-signed cert errors from Groq, Hugging Face,
+or yfinance):
+
+- `src/config.py` already calls `truststore.inject_into_ssl()` so Python uses
+  the OS certificate store.
+- yfinance (curl_cffi) needs a PEM bundle. Generate it once:
+
+```powershell
+@'
+import ssl, certifi
+from pathlib import Path
+parts = [Path(certifi.where()).read_text(encoding="utf-8")]
+ctx = ssl.create_default_context(); ctx.load_default_certs()
+parts += [ssl.DER_cert_to_PEM_cert(d) for d in ctx.get_ca_certs(binary_form=True)]
+Path("data/ca_bundle.pem").write_text("\n".join(parts), encoding="utf-8")
+'@ | .\.venv\Scripts\python.exe -
+```
+
+`config.py` auto-sets `CURL_CA_BUNDLE` to `data/ca_bundle.pem` when present.
+
 ### Run the full stack
 
 ```powershell
@@ -166,13 +188,17 @@ rather than inventing ground truth.
 
 ### Eval results
 
-_To be filled after your first complete run with a real GROQ_API_KEY:_
+From verification run `run_12ba9ded23c5` (AAPL, focus "competition risk",
+2026-06-11, 31,321 tokens, $0.0123, 315s):
 
 | Eval | Result |
 |---|---|
-| Numeric exact-match | _pending_ |
-| Grounded-claim % | _pending_ |
-| Retrieval hit-rate@5 (dense → rerank) | _pending — requires golden answers_ |
+| Numeric exact-match (report vs recomputed XBRL) | **22/22 = 100%** |
+| Grounded-claim % (NLI vs cited chunks) | **100%** (mean entailment 0.996–0.998) |
+| Retrieval hit-rate@5 / MRR (dense vs rerank) | _pending — fill `evals/golden/aapl.yaml` answers first_ |
+
+3 claims the critic could not verify after 2 revision loops were dropped and
+disclosed in the report's `data_gaps` — exactly the intended behavior.
 
 ## Screenshots
 
