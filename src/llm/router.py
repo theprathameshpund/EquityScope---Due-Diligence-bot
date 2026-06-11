@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
+from collections import deque
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -35,6 +37,59 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 class BudgetExceededError(RuntimeError):
     """Raised when a run hits RUN_TOKEN_BUDGET."""
+
+
+class RateLimitPacer:
+    """Sliding-window pacing: keeps requests/minute and tokens/minute under
+    the provider's published limits so calls wait instead of getting 429s.
+    Thread-safe — parallel agent nodes share one pacer per model tier."""
+
+    def __init__(self, rpm: int, tpm: int) -> None:
+        self.rpm = rpm
+        self.tpm = tpm
+        self._events: deque[tuple[float, int]] = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self, estimated_tokens: int) -> None:
+        if self.rpm <= 0 and self.tpm <= 0:
+            return
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._events and now - self._events[0][0] > 60.0:
+                    self._events.popleft()
+                requests_ok = self.rpm <= 0 or len(self._events) < self.rpm
+                tokens_in_window = sum(tokens for _, tokens in self._events)
+                tokens_ok = self.tpm <= 0 or tokens_in_window + estimated_tokens <= self.tpm
+                if requests_ok and tokens_ok:
+                    self._events.append((now, estimated_tokens))
+                    return
+                wait = (self._events[0][0] + 60.0 - now) if self._events else 1.0
+            wait = min(max(wait, 0.5), 61.0)
+            log.info(
+                "llm_rate_pacing",
+                wait_s=round(wait, 1),
+                window_tokens=tokens_in_window,
+                window_requests=len(self._events),
+            )
+            time.sleep(wait)
+
+
+_pacers: dict[tuple[str, str], RateLimitPacer] = {}
+_pacers_lock = threading.Lock()
+
+
+def _get_pacer(provider: str, price_tier: str) -> RateLimitPacer:
+    key = (provider, price_tier)
+    with _pacers_lock:
+        if key not in _pacers:
+            if provider == "groq":
+                tpm = settings.groq_tpm_fast if price_tier == "fast" else settings.groq_tpm_smart
+                _pacers[key] = RateLimitPacer(rpm=settings.groq_max_rpm, tpm=tpm)
+            else:
+                # Anthropic paid tiers are generous; tenacity retries suffice.
+                _pacers[key] = RateLimitPacer(rpm=0, tpm=0)
+        return _pacers[key]
 
 
 class LLMResponse(BaseModel):
@@ -160,6 +215,9 @@ class LLMRouter:
                 f"({self.tracker.tokens_used}/{self.tracker.token_limit})"
             )
         provider, model, price_tier = _route(tier)
+        pacer = _get_pacer(provider, price_tier)
+        # Conservative estimate: full prompt plus the entire output allowance.
+        estimated_tokens = _approx_tokens(system + user) + max_tokens
 
         @retry(
             stop=stop_after_attempt(settings.llm_max_retries + 1),
@@ -168,6 +226,7 @@ class LLMRouter:
             reraise=True,
         )
         def _call() -> tuple[str, int, int]:
+            pacer.acquire(estimated_tokens)
             if provider == "anthropic":
                 return self._call_anthropic(model, system, user, max_tokens, temperature)
             return self._call_groq(model, system, user, json_mode, max_tokens, temperature)

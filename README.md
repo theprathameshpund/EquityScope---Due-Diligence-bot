@@ -138,6 +138,7 @@ citations in the finished report. Health check: http://localhost:8000/healthz
 | `GROQ_MODEL_FAST` / `GROQ_MODEL_SMART` | no | llama-3.1-8b / llama-3.3-70b | Model tiers |
 | `ANTHROPIC_MODEL` | no | claude-sonnet-4-20250514 | Writer model when anthropic |
 | `LLM_MAX_RETRIES` / `LLM_REQUEST_TIMEOUT_S` | no | 3 / 60 | Resilience knobs |
+| `GROQ_MAX_RPM` / `GROQ_TPM_FAST` / `GROQ_TPM_SMART` | no | 28 / 6000 / 12000 | Proactive rate pacing (matches Groq free tier; 0 disables) |
 | `EMBEDDING_MODEL` / `EMBEDDING_DEVICE` | no | bge-large-en-v1.5 / cpu | Local embeddings (no API) |
 | `QDRANT_URL` / `QDRANT_COLLECTION` | no | localhost:6333 / equityscope_filings | Vector store |
 | `POSTGRES_DSN` | no | localhost:5432 (5433 under WSL) | LangGraph checkpoints |

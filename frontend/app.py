@@ -205,18 +205,28 @@ if "run" in st.query_params and "run_id" not in st.session_state:
 
 with st.form("run_form"):
     col1, col2 = st.columns([1, 2])
-    company = col1.text_input("Company or ticker", placeholder="NVDA")
-    focus = col2.text_input("Focus (optional)", placeholder="supply-chain risk")
+    company = col1.text_input("Company or ticker", placeholder="e.g. NVDA or NVIDIA")
+    focus = col2.text_input("Focus (optional)", placeholder="e.g. supply-chain risk")
     submitted = st.form_submit_button("Run due diligence", type="primary")
 
+if submitted and not company.strip():
+    st.warning(
+        "Type a company name or ticker first — the gray text is only an example. "
+        "Nothing was run."
+    )
+
 if submitted and company.strip():
+    # A new request invalidates whatever report was on screen before.
+    st.session_state.pop("run_id", None)
     try:
         run_id = start_run(company.strip(), focus.strip())
     except httpx.HTTPStatusError as exc:
         st.error(f"Failed to start run: {exc.response.status_code} {exc.response.text}")
         st.stop()
     st.session_state["run_id"] = run_id
-    st.info(f"Run started: `{run_id}`")
+    st.info(f"Run started for **{company.strip()}**: `{run_id}`")
+    if "ticker" not in company.strip().lower() and len(company.strip()) > 5:
+        st.caption("First run for a company ingests its SEC filings — this can take several minutes.")
 
     col_timeline, col_meter = st.columns([3, 1])
     timeline = col_timeline.empty()
@@ -232,8 +242,14 @@ if run_id:
     data = fetch_report(str(run_id))
     status = data.get("status")
     if status == "done":
+        shown_company = (
+            (data.get("report") or {}).get("company", {}).get("name")
+            or data.get("company")
+            or "?"
+        )
+        st.success(f"Showing completed run `{run_id}` — **{shown_company}**")
         render_report(data)
     elif status == "failed":
-        st.error(f"Run failed: {data.get('error', 'unknown error')}")
+        st.error(f"Run `{run_id}` failed: {data.get('error', 'unknown error')}")
     elif not submitted:
         st.info(f"Run `{run_id}` is {status}… refresh to update.")

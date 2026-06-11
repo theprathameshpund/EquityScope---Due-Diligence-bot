@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=3, ge=0)
     llm_request_timeout_s: float = Field(default=60.0, gt=0)
 
+    # Proactive client-side pacing so runs never slam into provider 429s.
+    # Defaults match Groq's free tier; set 0 to disable a given cap.
+    groq_max_rpm: int = Field(default=28, ge=0)
+    groq_tpm_fast: int = Field(default=6_000, ge=0)
+    groq_tpm_smart: int = Field(default=12_000, ge=0)
+
     # ── Embeddings ─────────────────────────────────────────────
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     embedding_device: str = "cpu"

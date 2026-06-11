@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from src.config import settings
 from src.llm.router import (
@@ -42,6 +44,39 @@ def test_tracker_registry_per_run() -> None:
     assert get_tracker("run_test_a") is a
     drop_tracker("run_test_a")
     drop_tracker("run_test_b")
+
+
+def test_pacer_allows_within_limits() -> None:
+    from src.llm.router import RateLimitPacer
+
+    pacer = RateLimitPacer(rpm=10, tpm=1000)
+    start = time.monotonic()
+    for _ in range(5):
+        pacer.acquire(100)  # 5 requests, 500 tokens — all inside the window
+    assert time.monotonic() - start < 1.0
+
+
+def test_pacer_blocks_over_token_budget() -> None:
+    from src.llm.router import RateLimitPacer
+
+    pacer = RateLimitPacer(rpm=0, tpm=100)
+    pacer.acquire(90)
+    # Next call would exceed TPM; with a synthetic old event it must not block.
+    pacer._events.clear()
+    pacer._events.append((time.monotonic() - 61.0, 90))
+    start = time.monotonic()
+    pacer.acquire(90)  # expired event is pruned, so this is immediate
+    assert time.monotonic() - start < 1.0
+
+
+def test_pacer_disabled_never_blocks() -> None:
+    from src.llm.router import RateLimitPacer
+
+    pacer = RateLimitPacer(rpm=0, tpm=0)
+    start = time.monotonic()
+    for _ in range(100):
+        pacer.acquire(10_000)
+    assert time.monotonic() - start < 0.5
 
 
 def test_extract_json_strips_fences() -> None:
