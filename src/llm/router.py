@@ -154,6 +154,21 @@ def _is_quota_exhausted(exc: BaseException) -> bool:
     )
 
 
+def _quota_cooldown_s(exc: BaseException) -> float:
+    """How long to route smart-tier calls straight to the fast model after
+    this quota error, skipping pointless probes of an exhausted quota."""
+    message = str(exc)
+    if "per day" in message or "TPD" in message:
+        return 600.0
+    if "per minute" in message or "TPM" in message:
+        return 90.0
+    return 0.0
+
+
+_smart_fallback_until = 0.0
+_smart_fallback_lock = threading.Lock()
+
+
 def _is_retryable(exc: BaseException) -> bool:
     name = type(exc).__name__
     return name in {
@@ -223,7 +238,13 @@ class LLMRouter:
                 f"Run {self.run_id} exceeded token budget "
                 f"({self.tracker.tokens_used}/{self.tracker.token_limit})"
             )
+        global _smart_fallback_until
         provider, model, price_tier = _route(tier)
+        # During a quota cooldown, don't even probe the exhausted smart model.
+        if provider == "groq" and model != settings.groq_model_fast:
+            with _smart_fallback_lock:
+                if time.monotonic() < _smart_fallback_until:
+                    provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
         # Conservative estimate: full prompt plus the entire output allowance.
         estimated_tokens = _approx_tokens(system + user) + max_tokens
 
@@ -255,10 +276,17 @@ class LLMRouter:
             )
             if not can_fall_back:
                 raise
+            cooldown = _quota_cooldown_s(exc)
+            if cooldown > 0:
+                with _smart_fallback_lock:
+                    _smart_fallback_until = max(
+                        _smart_fallback_until, time.monotonic() + cooldown
+                    )
             log.warning(
                 "smart_model_quota_exhausted_falling_back_to_fast",
                 tier=tier,
                 model=model,
+                cooldown_s=cooldown,
                 error=str(exc)[:200],
             )
             provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
