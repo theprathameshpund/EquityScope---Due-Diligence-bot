@@ -40,9 +40,9 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.api
-    env_file: .env
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: ./backend/.env
     environment:
       QDRANT_URL: http://qdrant:6333
       POSTGRES_DSN: postgresql://equityscope:equityscope@postgres:5432/equityscope
@@ -50,7 +50,7 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
-      - ./data/filings:/app/data/filings
+      - ./backend/data/filings:/app/data/filings
     depends_on:
       qdrant:
         condition: service_healthy
@@ -67,18 +67,15 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    env_file: .env
-    environment:
-      API_BASE_URL: http://api:8000
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-8501}:8501"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8501/ || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

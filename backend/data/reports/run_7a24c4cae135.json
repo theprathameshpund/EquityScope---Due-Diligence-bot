@@ -1,0 +1,58 @@
+{
+  "company": {
+    "name": "WOLTERS KLUWER N V /FI",
+    "ticker": "WTKWY",
+    "cik": "861967",
+    "exchange": "",
+    "sector": ""
+  },
+  "executive_summary": [],
+  "business_overview": [],
+  "financial_health": {
+    "table": {
+      "metrics": []
+    },
+    "commentary": []
+  },
+  "risk_matrix": [
+    {
+      "title": "Decline in Stock Price",
+      "severity": "high",
+      "likelihood": "medium",
+      "claims": []
+    },
+    {
+      "title": "Buyback Risks",
+      "severity": "medium",
+      "likelihood": "low",
+      "claims": []
+    },
+    {
+      "title": "Valuation Risks",
+      "severity": "medium",
+      "likelihood": "low",
+      "claims": []
+    }
+  ],
+  "recent_developments": [],
+  "red_flags": [],
+  "data_gaps": [
+    "No relevant filing evidence retrieved.",
+    "XBRL financial data unavailable: Client error '404 Not Found' for url 'https://data.sec.gov/api/xbrl/companyfacts/CIK0000861967.json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"
+  ],
+  "metadata": {
+    "run_id": "run_7a24c4cae135",
+    "generated_at": "2026-06-12T06:14:43.478302Z",
+    "duration_s": 88.5,
+    "tokens_used": 9121,
+    "cost_usd": 0.002181,
+    "model_versions": {
+      "fast": "llama-3.1-8b-instant",
+      "smart": "llama-3.3-70b-versatile",
+      "writer": "llama-3.3-70b-versatile",
+      "embeddings": "BAAI/bge-large-en-v1.5",
+      "nli": "cross-encoder/nli-deberta-v3-base"
+    },
+    "warnings": []
+  }
+}

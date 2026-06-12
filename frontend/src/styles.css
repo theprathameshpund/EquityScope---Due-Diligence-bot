@@ -1,0 +1,91 @@
+/* ── EquityScope design tokens ─────────────────────────────── */
+:root {
+  --bg: #0a0e16;
+  --bg-grad-1: #0d1322;
+  --bg-grad-2: #090c13;
+  --panel: rgba(22, 28, 41, 0.78);
+  --panel-solid: #161c29;
+  --panel-2: #1e2636;
+  --panel-3: #273043;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text: #e9edf5;
+  --text-dim: #c3cad8;
+  --muted: #8b95a8;
+  --faint: #5d667a;
+
+  --accent: #5b8cff;
+  --accent-2: #8b5cf6;
+  --accent-grad: linear-gradient(135deg, #5b8cff 0%, #8b5cf6 100%);
+  --good: #34d399;
+  --good-bg: rgba(52, 211, 153, 0.1);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.09);
+  --bad: #f87171;
+  --bad-bg: rgba(248, 113, 113, 0.1);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.25);
+
+  --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+html, body { margin: 0; padding: 0; min-height: 100%; }
+
+body {
+  background:
+    radial-gradient(1100px 500px at 75% -10%, rgba(91, 140, 255, 0.09), transparent 60%),
+    radial-gradient(900px 450px at 10% 0%, rgba(139, 92, 246, 0.07), transparent 55%),
+    linear-gradient(180deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 { font-weight: 650; letter-spacing: -0.015em; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--panel-2);
+  padding: 0.12em 0.45em;
+  border-radius: 5px;
+  color: var(--text-dim);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button { font-family: var(--font); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--panel-3); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #32405c; }
+
+::selection { background: rgba(91, 140, 255, 0.35); }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.fade-up { animation: fadeUp 0.35s ease both; }

@@ -1,0 +1,22 @@
+{
+  "run_id": "run_12ba9ded23c5",
+  "grounded": 2,
+  "total": 2,
+  "threshold": 0.7,
+  "claims": [
+    {
+      "claim_id": "clm_c18a5548088a",
+      "section": "business_overview",
+      "text": "The Company designs, manufactures and markets smartphones, personal computers, tablets, wearables and accessories, and sells a variety of related services.",
+      "score": 0.9958,
+      "grounded": true
+    },
+    {
+      "claim_id": "clm_2c972c50b058",
+      "section": "risk_matrix",
+      "text": "The company's operations are also subject to the risks of industrial accidents at its suppliers and contract manufacturers. While the company's suppliers are required to maintain safe working environments and operations, an industrial accident could occur and could result in serious injuries or loss of life, disruption to the company's business, and harm to the company's reputation.",
+      "score": 0.9976,
+      "grounded": true
+    }
+  ]
+}

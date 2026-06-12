@@ -1,0 +1,144 @@
+<header class="topbar">
+  <div class="brand">
+    <span class="logo-mark">ES</span>
+    <div>
+      <h1 class="wordmark">EquityScope</h1>
+      <p class="tagline">AI due diligence · every claim cited &amp; verified</p>
+    </div>
+  </div>
+  @if (health(); as h) {
+    <div class="health">
+      <span class="pill" [class.up]="h.qdrant"><i></i>Vector DB</span>
+      <span class="pill" [class.up]="h.postgres"><i></i>Checkpoints</span>
+      <span class="pill" [class.up]="h.redis"><i></i>Events</span>
+    </div>
+  } @else {
+    <div class="health"><span class="pill down"><i></i>API offline</span></div>
+  }
+</header>
+
+<main>
+  <aside class="sidebar">
+    <app-runs-list [runs]="runs()" [selected]="currentRunId()" (open)="openRun($event)" />
+  </aside>
+
+  <section class="content">
+    <!-- ── 1 · New analysis ──────────────────────────────── -->
+    <div class="card hero fade-up">
+      <div class="card-head">
+        <span class="step-no">1</span>
+        <div>
+          <h2>New analysis</h2>
+          <p class="hint">Pick any US-listed company. First-time companies take a few extra minutes while SEC filings are downloaded and indexed.</p>
+        </div>
+      </div>
+      <form class="run-form" (ngSubmit)="startRun()">
+        <div class="fields">
+          <label>
+            <span>Company or ticker</span>
+            <input
+              name="company"
+              [ngModel]="company()"
+              (ngModelChange)="company.set($event)"
+              placeholder="e.g. NVDA or NVIDIA"
+              autocomplete="off"
+            />
+          </label>
+          <label>
+            <span>Focus area <em>(optional)</em></span>
+            <input
+              name="focus"
+              [ngModel]="focus()"
+              (ngModelChange)="focus.set($event)"
+              placeholder="What should the agents dig into?"
+              autocomplete="off"
+            />
+          </label>
+          <button class="cta" type="submit" [disabled]="running()">
+            @if (running()) { <span class="spinner"></span> Working… }
+            @else { Run due diligence → }
+          </button>
+        </div>
+        <div class="chips">
+          @for (suggestion of focusSuggestions; track suggestion) {
+            <button
+              type="button"
+              class="chip"
+              [class.on]="focus() === suggestion"
+              (click)="pickFocus(suggestion)"
+            >{{ suggestion }}</button>
+          }
+        </div>
+        @if (formError()) {
+          <p class="error">⚠ {{ formError() }}</p>
+        }
+      </form>
+    </div>
+
+    <!-- ── 2 · Agent pipeline (live) ─────────────────────── -->
+    @if (running() || timeline().length) {
+      <div class="card fade-up">
+        <div class="card-head">
+          <span class="step-no">2</span>
+          <div>
+            <h2>Agent pipeline</h2>
+            <p class="hint">Each agent reports progress live. Filings, market and news research run in parallel.</p>
+          </div>
+          <div class="meter">
+            <div class="m"><label>Tokens</label><b>{{ tokens().toLocaleString() }}</b></div>
+            <div class="m"><label>Cost</label><b>${{ cost().toFixed(4) }}</b></div>
+            <div class="m"><label>Elapsed</label><b>{{ elapsedLabel() }}</b></div>
+          </div>
+        </div>
+        <app-timeline [rows]="timeline()" />
+        @if (currentRunId(); as id) {
+          <p class="runid">run id <code>{{ id }}</code> — resumable if interrupted</p>
+        }
+      </div>
+    }
+
+    <!-- ── 3 · Report ────────────────────────────────────── -->
+    @if (current(); as data) {
+      @if (data.status === 'done') {
+        <app-report-view class="fade-up" [data]="data" />
+      } @else if (data.status === 'failed') {
+        <div class="card failed fade-up">
+          <h3>✕ Run failed</h3>
+          <p>{{ data.error }}</p>
+        </div>
+      }
+    } @else if (!running() && !timeline().length) {
+      <!-- Empty state: explain how it works -->
+      <div class="card how fade-up">
+        <h2>How it works</h2>
+        <div class="how-grid">
+          <div class="how-step">
+            <span class="how-icon">📥</span>
+            <h4>Ingest</h4>
+            <p>The latest 10-K, four 10-Qs and a year of 8-Ks are pulled from SEC EDGAR, parsed section-by-section and indexed.</p>
+          </div>
+          <div class="how-step">
+            <span class="how-icon">🤖</span>
+            <h4>Research</h4>
+            <p>Specialist agents query the filings, fetch market data and scan news — in parallel, guided by your focus area.</p>
+          </div>
+          <div class="how-step">
+            <span class="how-icon">🧮</span>
+            <h4>Compute</h4>
+            <p>Every financial number is calculated deterministically from XBRL data. The AI never does the math.</p>
+          </div>
+          <div class="how-step">
+            <span class="how-icon">🔍</span>
+            <h4>Verify</h4>
+            <p>A critic checks every claim against its cited source. Anything unverifiable is revised or dropped — and disclosed.</p>
+          </div>
+        </div>
+        <p class="how-foot">Start an analysis above, or open a previous run from the left.</p>
+      </div>
+    }
+  </section>
+</main>
+
+<footer>
+  <span>EquityScope · research tool, not investment advice</span>
+</footer>

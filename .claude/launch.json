@@ -3,16 +3,10 @@
   "configurations": [
     {
       "name": "ui",
-      "cwd": "frontend-angular",
+      "cwd": "frontend",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["ng", "serve", "--port", "4200"],
       "port": 4200
-    },
-    {
-      "name": "frontend",
-      "runtimeExecutable": ".venv\\Scripts\\python.exe",
-      "runtimeArgs": ["-m", "streamlit", "run", "frontend/app.py", "--server.port", "8501", "--server.headless", "true"],
-      "port": 8501
     }
   ]
 }
