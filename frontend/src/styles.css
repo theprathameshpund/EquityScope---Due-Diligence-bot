@@ -1,37 +1,78 @@
-/* ── EquityScope design tokens ─────────────────────────────── */
+/* ════════════════════════════════════════════════════════════
+   EquityScope · "Banker's Daylight" design system
+   Light-first, optional dark mode via <html data-theme="dark">
+   See docs/DESIGN_SPEC.md
+   ════════════════════════════════════════════════════════════ */
+
 :root {
-  --bg: #0a0e16;
-  --bg-grad-1: #0d1322;
-  --bg-grad-2: #090c13;
-  --panel: rgba(22, 28, 41, 0.78);
-  --panel-solid: #161c29;
-  --panel-2: #1e2636;
-  --panel-3: #273043;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* surfaces */
+  --paper: #fafaf7;
+  --surface: #ffffff;
+  --surface-2: #f3f2ee;
+  --surface-3: #eceae4;
+  --line: #e8e6e0;
+  --line-strong: #d9d6cd;
 
-  --text: #e9edf5;
-  --text-dim: #c3cad8;
-  --muted: #8b95a8;
-  --faint: #5d667a;
+  /* ink */
+  --ink: #1a1d23;
+  --ink-2: #5a6172;
+  --ink-3: #9aa1b0;
 
-  --accent: #5b8cff;
-  --accent-2: #8b5cf6;
-  --accent-grad: linear-gradient(135deg, #5b8cff 0%, #8b5cf6 100%);
-  --good: #34d399;
-  --good-bg: rgba(52, 211, 153, 0.1);
-  --warn: #fbbf24;
-  --warn-bg: rgba(251, 191, 36, 0.09);
-  --bad: #f87171;
-  --bad-bg: rgba(248, 113, 113, 0.1);
+  /* brand & accents */
+  --brand: #1e3a5f;
+  --brand-2: #2e5485;
+  --brand-soft: #eaf0f7;
+  --gold: #b08a3e;
+  --gold-soft: #f7f1e2;
+  --green: #2e7d5b;
+  --green-bg: #e7f2ed;
+  --amber: #c77f1f;
+  --amber-bg: #f9f0e0;
+  --red: #b3392e;
+  --red-bg: #f8ecea;
 
-  --radius: 14px;
-  --radius-sm: 9px;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.25);
+  /* shape & depth */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-rest: 0 1px 2px rgba(26, 29, 35, 0.05), 0 0 0 0.5px rgba(26, 29, 35, 0.04);
+  --shadow-raise: 0 8px 24px rgba(26, 29, 35, 0.1);
 
+  /* type */
   --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --mono: "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper: #12141a;
+  --surface: #1a1e27;
+  --surface-2: #222836;
+  --surface-3: #2b3242;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --ink: #e9edf5;
+  --ink-2: #a9b1c2;
+  --ink-3: #6d7689;
+
+  --brand: #7fa6e8;
+  --brand-2: #9bbcf2;
+  --brand-soft: rgba(127, 166, 232, 0.14);
+  --gold: #cda45c;
+  --gold-soft: rgba(205, 164, 92, 0.13);
+  --green: #4cc695;
+  --green-bg: rgba(76, 198, 149, 0.13);
+  --amber: #e0a64e;
+  --amber-bg: rgba(224, 166, 78, 0.12);
+  --red: #e0726a;
+  --red-bg: rgba(224, 114, 106, 0.13);
+
+  --shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  --shadow-raise: 0 10px 30px rgba(0, 0, 0, 0.45);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -41,40 +82,37 @@ html { scroll-behavior: smooth; }
 html, body { margin: 0; padding: 0; min-height: 100%; }
 
 body {
-  background:
-    radial-gradient(1100px 500px at 75% -10%, rgba(91, 140, 255, 0.09), transparent 60%),
-    radial-gradient(900px 450px at 10% 0%, rgba(139, 92, 246, 0.07), transparent 55%),
-    linear-gradient(180deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
-  background-attachment: fixed;
-  color: var(--text);
+  background-color: var(--paper);
+  color: var(--ink);
   font-family: var(--font);
   font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, h4 { font-weight: 650; letter-spacing: -0.015em; }
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.014em; margin: 0; }
 
 code {
   font-family: var(--mono);
-  font-size: 0.82em;
-  background: var(--panel-2);
-  padding: 0.12em 0.45em;
+  font-size: 0.8em;
+  background: var(--surface-2);
+  padding: 0.14em 0.45em;
   border-radius: 5px;
-  color: var(--text-dim);
+  color: var(--ink-2);
 }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--brand-2); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 button { font-family: var(--font); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--panel-3); border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #32405c; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
 
-::selection { background: rgba(91, 140, 255, 0.35); }
+::selection { background: rgba(30, 58, 95, 0.18); }
+[data-theme="dark"] ::selection { background: rgba(127, 166, 232, 0.3); }
 
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(10px); }
@@ -89,3 +127,8 @@ button { font-family: var(--font); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .fade-up { animation: fadeUp 0.35s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}

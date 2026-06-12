@@ -3,18 +3,29 @@
     <span class="logo-mark">ES</span>
     <div>
       <h1 class="wordmark">EquityScope</h1>
-      <p class="tagline">AI due diligence · every claim cited &amp; verified</p>
+      <p class="tagline">Due diligence copilot · every claim cited &amp; verified</p>
     </div>
   </div>
-  @if (health(); as h) {
-    <div class="health">
-      <span class="pill" [class.up]="h.qdrant"><i></i>Vector DB</span>
-      <span class="pill" [class.up]="h.postgres"><i></i>Checkpoints</span>
-      <span class="pill" [class.up]="h.redis"><i></i>Events</span>
-    </div>
-  } @else {
-    <div class="health"><span class="pill down"><i></i>API offline</span></div>
-  }
+  <div class="top-right">
+    @if (health(); as h) {
+      <div class="health">
+        <span class="pill" [class.up]="h.qdrant"><i></i>Vector DB</span>
+        <span class="pill" [class.up]="h.postgres"><i></i>Checkpoints</span>
+        <span class="pill" [class.up]="h.redis"><i></i>Events</span>
+      </div>
+    } @else {
+      <div class="health"><span class="pill down"><i></i>API offline</span></div>
+    }
+    <button
+      class="theme-toggle"
+      type="button"
+      (click)="toggleTheme()"
+      [attr.aria-label]="theme() === 'light' ? 'Switch to dark mode' : 'Switch to light mode'"
+      [title]="theme() === 'light' ? 'Dark mode' : 'Light mode'"
+    >
+      @if (theme() === 'light') { ☾ } @else { ☀ }
+    </button>
+  </div>
 </header>
 
 <main>
@@ -70,7 +81,7 @@
           }
         </div>
         @if (formError()) {
-          <p class="error">⚠ {{ formError() }}</p>
+          <p class="error">{{ formError() }}</p>
         }
       </form>
     </div>
@@ -108,27 +119,26 @@
         </div>
       }
     } @else if (!running() && !timeline().length) {
-      <!-- Empty state: explain how it works -->
       <div class="card how fade-up">
         <h2>How it works</h2>
         <div class="how-grid">
           <div class="how-step">
-            <span class="how-icon">📥</span>
+            <span class="how-no">01</span>
             <h4>Ingest</h4>
             <p>The latest 10-K, four 10-Qs and a year of 8-Ks are pulled from SEC EDGAR, parsed section-by-section and indexed.</p>
           </div>
           <div class="how-step">
-            <span class="how-icon">🤖</span>
+            <span class="how-no">02</span>
             <h4>Research</h4>
             <p>Specialist agents query the filings, fetch market data and scan news — in parallel, guided by your focus area.</p>
           </div>
           <div class="how-step">
-            <span class="how-icon">🧮</span>
+            <span class="how-no">03</span>
             <h4>Compute</h4>
             <p>Every financial number is calculated deterministically from XBRL data. The AI never does the math.</p>
           </div>
           <div class="how-step">
-            <span class="how-icon">🔍</span>
+            <span class="how-no">04</span>
             <h4>Verify</h4>
             <p>A critic checks every claim against its cited source. Anything unverifiable is revised or dropped — and disclosed.</p>
           </div>

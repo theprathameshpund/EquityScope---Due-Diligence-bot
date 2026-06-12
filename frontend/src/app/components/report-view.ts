@@ -1,10 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 
 import { Claim, EvidenceChunk, MetricValue, ReportStatus } from '../models';
 import { ClaimsComponent } from './claims';
 
 interface NavSection {
   id: string;
+  no: string;
   label: string;
   count: number | null;
 }
@@ -15,31 +16,63 @@ interface NavSection {
   imports: [ClaimsComponent],
   template: `
     @if (data().report; as report) {
-      <!-- Company banner -->
-      <div class="banner">
-        <div class="identity">
-          <span class="ticker-badge">{{ report.company.ticker || '—' }}</span>
-          <div>
-            <h2>{{ report.company.name }}</h2>
-            <p class="sub">
-              CIK {{ report.company.cik }}
-              · generated {{ formatDate(report.metadata.generated_at) }}
-              · run <code>{{ report.metadata.run_id }}</code>
-            </p>
-          </div>
-        </div>
-        <div class="stats">
-          <div class="stat"><label>Verified claims</label><b>{{ claimCount() }}</b></div>
-          <div class="stat"><label>Tokens</label><b>{{ report.metadata.tokens_used.toLocaleString() }}</b></div>
-          <div class="stat"><label>Cost</label><b>\${{ report.metadata.cost_usd.toFixed(4) }}</b></div>
-          <div class="stat"><label>Duration</label><b>{{ report.metadata.duration_s.toFixed(0) }}s</b></div>
+      <!-- Masthead -->
+      <div class="masthead">
+        <span class="confidential">Confidential · research use only</span>
+        <div class="mode-toggle" role="tablist" aria-label="Report depth">
+          <button
+            role="tab"
+            [attr.aria-selected]="view() === 'summary'"
+            [class.on]="view() === 'summary'"
+            (click)="view.set('summary')"
+          >Summary</button>
+          <button
+            role="tab"
+            [attr.aria-selected]="view() === 'detailed'"
+            [class.on]="view() === 'detailed'"
+            (click)="view.set('detailed')"
+          >Detailed</button>
         </div>
       </div>
 
-      <!-- Section navigation -->
-      <nav class="section-nav">
+      <h2 class="title">Due diligence report</h2>
+      <p class="subtitle">
+        {{ report.company.name }}
+        <span class="tick">{{ report.company.ticker }}</span>
+        · CIK {{ report.company.cik }}
+        · {{ formatDate(report.metadata.generated_at) }}
+      </p>
+      <div class="gold-rule"></div>
+
+      <!-- Verdict cards -->
+      <div class="verdicts">
+        <div class="verdict">
+          <label>Risk profile</label>
+          <b class="risk-{{ riskProfile().tone }}">● {{ riskProfile().label }}</b>
+          <span>{{ riskProfile().detail }}</span>
+        </div>
+        <div class="verdict">
+          <label>Verified claims</label>
+          <b>{{ claimCount() }}</b>
+          <span>every one cited &amp; checked</span>
+        </div>
+        <div class="verdict">
+          <label>Disclosures</label>
+          <b>{{ report.data_gaps.length }}</b>
+          <span>gaps &amp; dropped content listed</span>
+        </div>
+        <div class="verdict">
+          <label>Run cost</label>
+          <b class="mono">\${{ report.metadata.cost_usd.toFixed(4) }}</b>
+          <span>{{ report.metadata.tokens_used.toLocaleString() }} tokens · {{ report.metadata.duration_s.toFixed(0) }}s</span>
+        </div>
+      </div>
+
+      <!-- Contents -->
+      <nav class="contents">
         @for (section of nav(); track section.id) {
           <a [href]="'#' + section.id">
+            <span class="no">{{ section.no }}</span>
             {{ section.label }}
             @if (section.count !== null) { <span class="count">{{ section.count }}</span> }
           </a>
@@ -47,53 +80,56 @@ interface NavSection {
       </nav>
 
       <section id="sec-exec">
-        <h3><span class="sec-icon">📌</span> Executive Summary</h3>
+        <h3><span class="no">01</span> Executive summary</h3>
         <app-claims [claims]="report.executive_summary" [evidence]="evidenceById()" />
       </section>
 
-      <section id="sec-biz">
-        <h3><span class="sec-icon">🏢</span> Business Overview</h3>
-        <app-claims [claims]="report.business_overview" [evidence]="evidenceById()" />
-      </section>
+      @if (view() === 'detailed') {
+        <section id="sec-biz">
+          <h3><span class="no">{{ sectionNo('sec-biz') }}</span> Business overview</h3>
+          <app-claims [claims]="report.business_overview" [evidence]="evidenceById()" />
+        </section>
+      }
 
       <section id="sec-fin">
-        <h3><span class="sec-icon">🧮</span> Financial Health</h3>
-        <p class="sec-note">All figures computed deterministically from SEC XBRL filings — never by the AI.</p>
+        <h3><span class="no">{{ sectionNo('sec-fin') }}</span> Financial health</h3>
+        <p class="note">All figures computed deterministically from SEC XBRL filings — never by the AI.</p>
 
-        <div class="metric-tiles">
+        <div class="tiles">
           @for (tile of headlineTiles(); track tile.id) {
             <div class="tile">
               <label>{{ tile.label }}</label>
               <b [class.pos]="tile.tone === 'pos'" [class.neg]="tile.tone === 'neg'">{{ tile.value }}</b>
-              <span class="period">{{ tile.period }}</span>
+              <span>{{ tile.period }}</span>
             </div>
           }
         </div>
 
-        <details class="full-table" open>
-          <summary>All {{ report.financial_health.table.metrics.length }} metrics</summary>
-          <table class="metrics">
-            <thead><tr><th>Metric</th><th>Value</th><th>Period</th></tr></thead>
-            <tbody>
-              @for (metric of report.financial_health.table.metrics; track metric.metric_id) {
-                <tr>
-                  <td>{{ metric.name }}</td>
-                  <td class="num" [class.pos]="isPositive(metric)" [class.neg]="isNegative(metric)">
-                    {{ formatMetric(metric) }}
-                  </td>
-                  <td class="muted">{{ metric.period }}</td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        </details>
-
-        <app-claims [claims]="report.financial_health.commentary" [evidence]="evidenceById()" />
+        @if (view() === 'detailed') {
+          <details class="full-table" open>
+            <summary>All {{ report.financial_health.table.metrics.length }} metrics</summary>
+            <table class="metrics">
+              <thead><tr><th>Metric</th><th>Value</th><th>Period</th></tr></thead>
+              <tbody>
+                @for (metric of report.financial_health.table.metrics; track metric.metric_id) {
+                  <tr>
+                    <td>{{ metric.name }}</td>
+                    <td class="num" [class.pos]="isPositive(metric)" [class.neg]="isNegative(metric)">
+                      {{ formatMetric(metric) }}
+                    </td>
+                    <td class="dim">{{ metric.period }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </details>
+          <app-claims [claims]="report.financial_health.commentary" [evidence]="evidenceById()" />
+        }
       </section>
 
       <section id="sec-risk">
-        <h3><span class="sec-icon">⚠️</span> Risk Matrix</h3>
-        @if (!report.risk_matrix.length) { <p class="sec-note">No risks identified.</p> }
+        <h3><span class="no">{{ sectionNo('sec-risk') }}</span> Risk matrix</h3>
+        @if (!report.risk_matrix.length) { <p class="note">No risks identified.</p> }
         <div class="risk-grid">
           @for (risk of report.risk_matrix; track risk.title) {
             <div class="risk sev-{{ risk.severity }}">
@@ -104,160 +140,227 @@ interface NavSection {
                   <span class="badge b-{{ risk.likelihood }}">{{ risk.likelihood }} likelihood</span>
                 </div>
               </div>
-              <app-claims [claims]="risk.claims" [evidence]="evidenceById()" />
+              @if (view() === 'detailed') {
+                <app-claims [claims]="risk.claims" [evidence]="evidenceById()" />
+              }
             </div>
           }
         </div>
       </section>
 
-      <section id="sec-dev">
-        <h3><span class="sec-icon">🗞️</span> Recent Developments</h3>
-        <app-claims [claims]="report.recent_developments" [evidence]="evidenceById()" />
-      </section>
+      @if (view() === 'detailed') {
+        <section id="sec-dev">
+          <h3><span class="no">{{ sectionNo('sec-dev') }}</span> Recent developments</h3>
+          <app-claims [claims]="report.recent_developments" [evidence]="evidenceById()" />
+        </section>
+      }
 
-      <section id="sec-flags">
-        <h3><span class="sec-icon">🚩</span> Red Flags</h3>
-        <app-claims [claims]="report.red_flags" [evidence]="evidenceById()" />
-      </section>
+      @if (report.red_flags.length || view() === 'detailed') {
+        <section id="sec-flags">
+          <h3><span class="no">{{ sectionNo('sec-flags') }}</span> Red flags</h3>
+          @if (!report.red_flags.length) {
+            <p class="note">No red flags surfaced by this run.</p>
+          }
+          @for (flag of report.red_flags; track flag.claim_id) {
+            <div class="flag-band">
+              <span class="flag-label">⚑ Red flag</span>
+              <p>{{ flag.text }}</p>
+            </div>
+          }
+        </section>
+      }
 
       @if (report.data_gaps.length) {
         <section id="sec-gaps">
-          <h3><span class="sec-icon">🕳️</span> Data Gaps &amp; Disclosures</h3>
-          <p class="sec-note">
-            EquityScope never silently keeps unverifiable content — everything dropped or unavailable is listed here.
-          </p>
-          @for (gap of report.data_gaps; track gap) {
-            <p class="gap">{{ gap }}</p>
+          <h3><span class="no">{{ sectionNo('sec-gaps') }}</span> Data gaps &amp; disclosures</h3>
+          <p class="note">Nothing unverifiable ships silently — everything dropped or unavailable is disclosed here.</p>
+          @if (view() === 'summary') {
+            <p class="gap-roll">{{ report.data_gaps.length }} disclosure{{ report.data_gaps.length === 1 ? '' : 's' }} — switch to Detailed to read them.</p>
+          } @else {
+            @for (gap of report.data_gaps; track gap) {
+              <p class="gap">{{ gap }}</p>
+            }
           }
         </section>
       }
 
       <div class="foot">
-        <div class="models">
-          @for (entry of modelEntries(); track entry[0]) {
-            <span class="model"><label>{{ entry[0] }}</label>{{ entry[1] }}</span>
-          }
-        </div>
+        <span class="provenance">
+          Generated from {{ claimCount() }} verified findings ·
+          models: {{ modelSummary() }}
+        </span>
         <div class="downloads">
-          <button (click)="download('md')">⬇ Markdown</button>
-          <button (click)="download('json')">⬇ JSON</button>
+          <button (click)="download('md')">Markdown</button>
+          <button (click)="download('json')">JSON</button>
         </div>
       </div>
     }
   `,
   styles: `
-    /* Banner */
-    .banner {
-      display: flex; justify-content: space-between; align-items: center;
-      gap: 1.4rem; flex-wrap: wrap;
-      padding-bottom: 1.2rem; border-bottom: 1px solid var(--border);
+    /* Masthead */
+    .masthead { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .confidential {
+      font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--gold); font-weight: 600;
     }
-    .identity { display: flex; align-items: center; gap: 1rem; }
-    .ticker-badge {
-      display: grid; place-items: center;
-      min-width: 64px; height: 64px; padding: 0 0.6rem;
-      border-radius: 14px;
-      background: var(--accent-grad);
-      color: #fff; font-weight: 800; font-size: 1.15rem; letter-spacing: 0.03em;
-      box-shadow: 0 6px 18px rgba(91, 140, 255, 0.35);
-    }
-    h2 { margin: 0; font-size: 1.4rem; }
-    .sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.82rem; }
-
-    .stats { display: flex; gap: 1.6rem; }
-    .stat { display: flex; flex-direction: column; align-items: flex-end; }
-    .stat label { color: var(--faint); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; }
-    .stat b { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
-
-    /* Section nav */
-    .section-nav {
-      position: sticky; top: 64px; z-index: 5;
-      display: flex; gap: 0.4rem; flex-wrap: wrap;
-      padding: 0.7rem 0;
-      background: linear-gradient(180deg, var(--panel-solid) 80%, transparent);
-      margin: 0 0 0.4rem;
-    }
-    .section-nav a {
-      display: inline-flex; align-items: center; gap: 0.4rem;
-      padding: 0.32rem 0.8rem;
+    .mode-toggle {
+      display: inline-flex;
+      border: 1px solid var(--line-strong);
       border-radius: 999px;
-      border: 1px solid var(--border-strong);
-      color: var(--muted); font-size: 0.78rem;
+      overflow: hidden;
+    }
+    .mode-toggle button {
+      border: none; background: transparent;
+      padding: 0.34rem 1rem; font-size: 0.8rem;
+      color: var(--ink-2); cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-toggle button.on { background: var(--brand); color: #f6f3ec; font-weight: 600; }
+
+    /* Title — editorial serif */
+    .title {
+      font-family: var(--serif);
+      font-size: 1.9rem; font-weight: 600;
+      margin: 0.9rem 0 0.2rem; color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+    .subtitle { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
+    .tick {
+      font-family: var(--mono); font-size: 0.74rem; font-weight: 600;
+      background: var(--brand-soft); color: var(--brand);
+      padding: 0.1rem 0.5rem; border-radius: 5px; margin-left: 0.2rem;
+    }
+    .gold-rule { height: 2px; background: var(--gold); opacity: 0.55; margin: 1.1rem 0 1.3rem; }
+
+    /* Verdicts */
+    .verdicts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.8rem; margin-bottom: 1.4rem;
+    }
+    .verdict {
+      background: var(--surface-2);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 1rem;
+      display: flex; flex-direction: column; gap: 0.18rem;
+    }
+    .verdict label {
+      color: var(--ink-3); font-size: 0.66rem;
+      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+    }
+    .verdict b { font-size: 1.12rem; color: var(--ink); }
+    .verdict b.mono { font-family: var(--mono); font-weight: 500; }
+    .verdict span { color: var(--ink-3); font-size: 0.72rem; }
+    .risk-low { color: var(--green) !important; }
+    .risk-medium { color: var(--amber) !important; }
+    .risk-high { color: var(--red) !important; }
+
+    /* Contents */
+    .contents {
+      display: flex; gap: 0.45rem; flex-wrap: wrap;
+      position: sticky; top: 66px; z-index: 5;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      backdrop-filter: blur(8px);
+      padding: 0.6rem 0; margin-bottom: 0.4rem;
+    }
+    .contents a {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.3rem 0.8rem; border-radius: 999px;
+      border: 1px solid var(--line-strong);
+      color: var(--ink-2); font-size: 0.78rem;
       transition: all 0.15s;
     }
-    .section-nav a:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
-    .count {
-      background: var(--panel-3); border-radius: 999px;
-      padding: 0 0.4rem; font-size: 0.7rem; color: var(--text-dim);
-    }
+    .contents a:hover { color: var(--ink); border-color: var(--brand-2); text-decoration: none; }
+    .contents .no { font-family: var(--mono); font-size: 0.68rem; color: var(--gold); font-weight: 500; }
+    .count { background: var(--surface-2); border-radius: 999px; padding: 0 0.42rem; font-size: 0.7rem; color: var(--ink-2); }
 
-    section { margin-top: 1.7rem; scroll-margin-top: 130px; }
+    section { margin-top: 1.8rem; scroll-margin-top: 130px; }
     h3 {
-      display: flex; align-items: center; gap: 0.55rem;
-      font-size: 1.02rem; margin: 0 0 0.8rem;
-      padding-bottom: 0.45rem; border-bottom: 1px solid var(--border);
+      font-family: var(--serif);
+      display: flex; align-items: baseline; gap: 0.6rem;
+      font-size: 1.22rem; font-weight: 600; margin: 0 0 0.8rem;
+      padding-bottom: 0.45rem; border-bottom: 1px solid var(--line);
+      color: var(--ink);
     }
-    .sec-icon { font-size: 1rem; }
-    .sec-note { color: var(--faint); font-size: 0.82rem; margin: -0.3rem 0 0.8rem; }
+    h3 .no { font-family: var(--mono); font-size: 0.78rem; color: var(--gold); font-weight: 500; }
+    .note { color: var(--ink-3); font-size: 0.82rem; margin: -0.3rem 0 0.8rem; }
 
-    /* Metric tiles */
-    .metric-tiles {
+    /* Tiles */
+    .tiles {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 0.8rem; margin-bottom: 1rem;
     }
     .tile {
-      background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: var(--radius-sm); padding: 0.75rem 0.95rem;
+      background: var(--surface-2);
+      border-radius: var(--radius-sm); padding: 0.8rem 1rem;
       display: flex; flex-direction: column; gap: 0.15rem;
     }
-    .tile label { color: var(--muted); font-size: 0.74rem; }
-    .tile b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
-    .tile .period { color: var(--faint); font-size: 0.7rem; }
-    .pos { color: var(--good); }
-    .neg { color: var(--bad); }
+    .tile label { color: var(--ink-2); font-size: 0.74rem; }
+    .tile b { font-size: 1.28rem; font-family: var(--mono); font-weight: 500; color: var(--ink); }
+    .tile span { color: var(--ink-3); font-size: 0.7rem; font-family: var(--mono); }
+    .pos { color: var(--green) !important; }
+    .neg { color: var(--red) !important; }
 
     .full-table { margin-bottom: 1rem; }
-    .full-table summary { cursor: pointer; color: var(--accent); font-size: 0.84rem; margin-bottom: 0.5rem; }
+    .full-table summary { cursor: pointer; color: var(--brand-2); font-size: 0.84rem; margin-bottom: 0.5rem; }
     .metrics { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     .metrics th {
-      text-align: left; color: var(--faint); font-weight: 600;
-      font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em;
+      text-align: left; color: var(--ink-3); font-weight: 600;
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+      background: var(--surface-2);
     }
-    .metrics th, .metrics td { padding: 0.5rem 0.65rem; border-bottom: 1px solid var(--border); }
-    .metrics tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
-    .num { font-variant-numeric: tabular-nums; }
-    .muted { color: var(--muted); }
+    .metrics th, .metrics td { padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line); }
+    .metrics tbody tr:hover { background: var(--surface-2); }
+    .num { font-family: var(--mono); font-size: 0.84rem; }
+    .dim { color: var(--ink-3); font-family: var(--mono); font-size: 0.78rem; }
 
     /* Risks */
-    .risk-grid { display: flex; flex-direction: column; gap: 0.9rem; }
+    .risk-grid { display: flex; flex-direction: column; gap: 0.85rem; }
     .risk {
-      border: 1px solid var(--border); border-left-width: 3px;
-      border-radius: var(--radius-sm);
-      padding: 0.9rem 1.1rem;
-      background: var(--panel-2);
+      border-left: 3px solid var(--line-strong);
+      border-radius: 0;
+      background: var(--surface-2);
+      border-top-right-radius: var(--radius-sm);
+      border-bottom-right-radius: var(--radius-sm);
+      padding: 0.85rem 1.1rem;
     }
-    .risk.sev-high { border-left-color: var(--bad); }
-    .risk.sev-medium { border-left-color: var(--warn); }
-    .risk.sev-low { border-left-color: var(--good); }
+    .risk.sev-high { border-left-color: var(--red); }
+    .risk.sev-medium { border-left-color: var(--amber); }
+    .risk.sev-low { border-left-color: var(--green); }
     .risk-head {
       display: flex; justify-content: space-between; align-items: center;
-      gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.6rem;
+      gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.4rem;
     }
+    .risk-head strong { font-family: var(--serif); font-size: 1rem; color: var(--ink); }
     .badges { display: flex; gap: 0.4rem; }
-    .badge {
-      font-size: 0.7rem; padding: 0.16rem 0.6rem; border-radius: 999px;
-      background: var(--panel-3); color: var(--muted);
-    }
-    .badge.b-high { color: var(--bad); background: var(--bad-bg); }
-    .badge.b-medium { color: var(--warn); background: var(--warn-bg); }
-    .badge.b-low { color: var(--good); background: var(--good-bg); }
+    .badge { font-size: 0.7rem; padding: 0.16rem 0.6rem; border-radius: 999px; font-weight: 600; }
+    .badge.b-high { color: var(--red); background: var(--red-bg); }
+    .badge.b-medium { color: var(--amber); background: var(--amber-bg); }
+    .badge.b-low { color: var(--green); background: var(--green-bg); }
 
-    .gap {
-      background: var(--warn-bg);
-      border-left: 3px solid var(--warn);
-      padding: 0.55rem 0.9rem; border-radius: 6px;
-      font-size: 0.85rem; color: var(--text-dim);
+    /* Red flags */
+    .flag-band {
+      background: var(--red-bg);
+      border-left: 3px solid var(--red);
+      border-radius: 0;
+      border-top-right-radius: var(--radius-sm);
+      border-bottom-right-radius: var(--radius-sm);
+      padding: 0.85rem 1.1rem; margin-bottom: 0.7rem;
+    }
+    .flag-label {
+      font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--red); font-weight: 700;
+    }
+    .flag-band p { margin: 0.3rem 0 0; font-family: var(--serif); font-size: 0.98rem; color: var(--ink); }
+
+    .gap, .gap-roll {
+      background: var(--amber-bg);
+      border-left: 3px solid var(--amber);
+      border-radius: 0;
+      border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+      padding: 0.55rem 0.9rem;
+      font-size: 0.84rem; color: var(--ink-2);
       margin: 0 0 0.5rem;
     }
 
@@ -265,28 +368,22 @@ interface NavSection {
     .foot {
       display: flex; justify-content: space-between; align-items: center;
       gap: 1rem; flex-wrap: wrap;
-      margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--border);
+      margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
     }
-    .models { display: flex; gap: 0.9rem; flex-wrap: wrap; }
-    .model { display: flex; flex-direction: column; font-size: 0.72rem; color: var(--text-dim); }
-    .model label { color: var(--faint); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .provenance { color: var(--ink-3); font-size: 0.74rem; font-family: var(--mono); }
     .downloads { display: flex; gap: 0.7rem; }
     .downloads button {
-      background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-      padding: 0.5rem 1.1rem; cursor: pointer; font-size: 0.86rem;
+      background: var(--surface); color: var(--ink);
+      border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+      padding: 0.5rem 1.1rem; cursor: pointer; font-size: 0.85rem;
       transition: border-color 0.15s, transform 0.12s;
     }
-    .downloads button:hover { border-color: var(--accent); transform: translateY(-1px); }
-
-    @media (max-width: 760px) {
-      .stats { width: 100%; justify-content: space-between; }
-      .stat { align-items: flex-start; }
-    }
+    .downloads button:hover { border-color: var(--brand-2); transform: translateY(-1px); }
   `,
 })
 export class ReportViewComponent {
   readonly data = input.required<ReportStatus>();
+  readonly view = signal<'summary' | 'detailed'>('summary');
 
   readonly evidenceById = computed<Record<string, EvidenceChunk>>(() => {
     const map: Record<string, EvidenceChunk> = {};
@@ -296,30 +393,40 @@ export class ReportViewComponent {
     return map;
   });
 
-  readonly claimCount = computed(() => {
+  readonly claimCount = computed(() => this.allClaims().length);
+
+  readonly riskProfile = computed(() => {
     const report = this.data().report;
-    if (!report) return 0;
-    return this.allClaims().length;
+    if (!report) return { label: 'Unknown', tone: 'medium', detail: '' };
+    const high = report.risk_matrix.filter((risk) => risk.severity === 'high').length;
+    const medium = report.risk_matrix.filter((risk) => risk.severity === 'medium').length;
+    const low = report.risk_matrix.filter((risk) => risk.severity === 'low').length;
+    const detail = `${high} high · ${medium} medium · ${low} low`;
+    if (high > 0 || report.red_flags.length > 0) return { label: 'Elevated', tone: 'high', detail };
+    if (medium > 0) return { label: 'Moderate', tone: 'medium', detail };
+    return { label: 'Low', tone: 'low', detail };
   });
 
   readonly nav = computed<NavSection[]>(() => {
     const report = this.data().report;
     if (!report) return [];
-    const sections: NavSection[] = [
-      { id: 'sec-exec', label: 'Summary', count: report.executive_summary.length },
-      { id: 'sec-biz', label: 'Business', count: report.business_overview.length },
-      { id: 'sec-fin', label: 'Financials', count: report.financial_health.table.metrics.length },
-      { id: 'sec-risk', label: 'Risks', count: report.risk_matrix.length },
-      { id: 'sec-dev', label: 'Developments', count: report.recent_developments.length },
-      { id: 'sec-flags', label: 'Red flags', count: report.red_flags.length },
-    ];
-    if (report.data_gaps.length) {
-      sections.push({ id: 'sec-gaps', label: 'Data gaps', count: report.data_gaps.length });
-    }
+    const detailed = this.view() === 'detailed';
+    const sections: NavSection[] = [];
+    let index = 0;
+    const push = (id: string, label: string, count: number | null) => {
+      index += 1;
+      sections.push({ id, no: index.toString().padStart(2, '0'), label, count });
+    };
+    push('sec-exec', 'Summary', report.executive_summary.length);
+    if (detailed) push('sec-biz', 'Business', report.business_overview.length);
+    push('sec-fin', 'Financials', report.financial_health.table.metrics.length);
+    push('sec-risk', 'Risks', report.risk_matrix.length);
+    if (detailed) push('sec-dev', 'Developments', report.recent_developments.length);
+    if (detailed || report.red_flags.length) push('sec-flags', 'Red flags', report.red_flags.length);
+    if (report.data_gaps.length) push('sec-gaps', 'Disclosures', report.data_gaps.length);
     return sections;
   });
 
-  /** Hand-picked headline metrics for the tile row, when present. */
   readonly headlineTiles = computed(() => {
     const report = this.data().report;
     if (!report) return [];
@@ -349,10 +456,16 @@ export class ReportViewComponent {
       .filter((tile): tile is NonNullable<typeof tile> => tile !== null);
   });
 
-  readonly modelEntries = computed<[string, string][]>(() => {
+  sectionNo(id: string): string {
+    return this.nav().find((section) => section.id === id)?.no ?? '··';
+  }
+
+  modelSummary(): string {
     const report = this.data().report;
-    return report ? Object.entries(report.metadata.model_versions) : [];
-  });
+    if (!report) return '';
+    const versions = report.metadata.model_versions;
+    return ['writer', 'nli'].map((key) => versions[key]).filter(Boolean).join(' · ');
+  }
 
   private allClaims(): Claim[] {
     const report = this.data().report;

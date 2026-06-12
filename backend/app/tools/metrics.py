@@ -249,4 +249,81 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
                     f"{DILUTION_PCT_FLAG:.0f}%/yr."
                 )
 
+    # ── ROIC (Return on Invested Capital) ────────────────────
+    net_income = _by_year(facts.facts.get("net_income", []))
+    total_assets = _by_year(facts.facts.get("assets_total", []))
+    total_liab = _by_year(facts.facts.get("liabilities_total", []))
+    # Invested capital = total assets - current liabilities (simple approximation)
+    roic_years = sorted(set(net_income) & set(assets_cur) & set(liab_cur))
+    if roic_years:
+        y = roic_years[-1]
+        invested_capital = total_assets.get(y, assets_cur.get(y, 0)) - liab_cur[y]
+        if invested_capital > 0 and y in net_income:
+            roic = net_income[y] / invested_capital * 100.0
+            metrics.append(
+                MetricValue(
+                    metric_id="roic",
+                    name=f"ROIC FY{y}",
+                    value=round(roic, 2),
+                    unit="%",
+                    period=f"FY{y}",
+                    inputs={"net_income": net_income[y],
+                            "invested_capital": invested_capital},
+                    formula="net_income / (total_assets - current_liabilities) * 100",
+                )
+            )
+            if roic < 0:
+                anomalies.append(f"Negative ROIC of {roic:.1f}% in FY{y} — capital destroying.")
+            elif roic > 20:
+                pass  # note positive ROIC but not an anomaly
+
+    # ── Earnings quality (accruals ratio) ────────────────────
+    # Accruals ratio = (Net Income - Operating Cash Flow) / Revenue
+    # Closer to 0 = higher quality; high positive = earnings not backed by cash.
+    eq_years = sorted(set(net_income) & set(ocf) & set(revenue))
+    if eq_years:
+        y = eq_years[-1]
+        if revenue[y] != 0:
+            accruals = (net_income[y] - ocf[y]) / revenue[y] * 100.0
+            metrics.append(
+                MetricValue(
+                    metric_id="accruals_ratio",
+                    name=f"Accruals ratio FY{y}",
+                    value=round(accruals, 2),
+                    unit="%",
+                    period=f"FY{y}",
+                    inputs={"net_income": net_income[y], "operating_cash_flow": ocf[y],
+                            "revenue": revenue[y]},
+                    formula="(net_income - operating_cash_flow) / revenue * 100",
+                )
+            )
+            if accruals > 10:
+                anomalies.append(
+                    f"High accruals ratio of {accruals:.1f}% in FY{y} — earnings quality concern."
+                )
+
+    # ── Cash conversion (OCF / Net Income) ───────────────────
+    # Ratio > 1 means cash earnings exceed accounting earnings.
+    cc_years = sorted(set(net_income) & set(ocf))
+    if cc_years:
+        y = cc_years[-1]
+        if net_income[y] != 0:
+            cash_conv = ocf[y] / net_income[y]
+            metrics.append(
+                MetricValue(
+                    metric_id="cash_conversion",
+                    name=f"Cash conversion FY{y}",
+                    value=round(cash_conv, 2),
+                    unit="x",
+                    period=f"FY{y}",
+                    inputs={"operating_cash_flow": ocf[y], "net_income": net_income[y]},
+                    formula="operating_cash_flow / net_income",
+                )
+            )
+            if cash_conv < 0.8 and net_income[y] > 0:
+                anomalies.append(
+                    f"Cash conversion of {cash_conv:.2f}x in FY{y} — OCF significantly "
+                    "below reported earnings."
+                )
+
     return FinancialAnalysis(metrics=metrics, anomalies=anomalies)

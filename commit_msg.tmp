@@ -1,16 +1,18 @@
-﻿Redesigned Angular UI: sectioned, guided, premium dark theme
+﻿Banker's Daylight design system applied to Angular frontend
 
-- Glass sticky header with gradient logo mark + infra health pills
-- Numbered sections: New analysis (focus chips, inline validation),
-  Agent pipeline (stepper with pending states, parallel badges, live
-  token/cost/elapsed meter), Report
-- Report: company banner with ticker badge + stat row, sticky section
-  nav with counts, color-coded headline metric tiles, collapsible full
-  metrics table, severity-striped risk cards, verified-claim checkmarks,
-  EDGAR citation blockquotes, data-gap disclosures, model footer
-- Runs sidebar: ticker avatars, status dots, relative timestamps
-- How-it-works empty state explaining the 4-stage pipeline
-- Design tokens: gradient background, glass panels, animations;
-  responsive single-column layout under 980px
+Implements docs/DESIGN_SPEC.md visual direction in the live app:
+- Light-first token sheet (warm paper, charcoal ink, slate-blue brand,
+  muted gold accents) + fully tuned dark mode via data-theme attribute;
+  toggle in header, persisted, defaults to OS preference
+- Editorial report: Source Serif 4 masthead and section headings, gold
+  section numbers and rule, CONFIDENTIAL marker, ticker chip
+- Verdict cards row incl. derived risk profile from the risk matrix
+- Summary/Detailed report toggle with dynamic contiguous section
+  numbering; summary collapses to exec summary, tiles, risk titles
+- Red flag bands, gold-ruled citation blockquotes, verified-claim
+  checkmarks, mono tabular numerals across data
+- Restyled header pills, pipeline stepper, runs sidebar, how-it-works
+- Inter / Source Serif 4 / JetBrains Mono with system fallbacks;
+  reduced-motion support; body transition removed (Chromium quirk)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

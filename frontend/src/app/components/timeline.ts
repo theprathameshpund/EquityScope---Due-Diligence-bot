@@ -9,21 +9,20 @@ export interface TimelineRow {
 interface Stage {
   node: string;
   label: string;
-  icon: string;
   detail: string;
   parallel?: boolean;
 }
 
 /** Canonical pipeline order — shown even before events arrive. */
 const STAGES: Stage[] = [
-  { node: 'ingest_check', label: 'Ingest & index', icon: '📥', detail: 'SEC filings → chunks → vector index' },
-  { node: 'filings', label: 'Filings research', icon: '📄', detail: 'agentic RAG over 10-K/10-Q/8-K', parallel: true },
-  { node: 'market', label: 'Market data', icon: '📈', detail: 'price, multiples, peers', parallel: true },
-  { node: 'news', label: 'News scan', icon: '📰', detail: 'last 90 days, sentiment-tagged', parallel: true },
-  { node: 'analyst', label: 'Financial analysis', icon: '🧮', detail: 'deterministic XBRL metrics' },
-  { node: 'writer', label: 'Report writer', icon: '✍️', detail: 'structured, fully cited draft' },
-  { node: 'critic', label: 'Critic verification', icon: '🔍', detail: 'NLI entailment + numeric checks' },
-  { node: 'finalize', label: 'Finalize', icon: '🏁', detail: 'drop unverified, compute cost' },
+  { node: 'ingest_check', label: 'Ingest & index', detail: 'SEC filings → chunks → vector index' },
+  { node: 'filings', label: 'Filings research', detail: 'agentic RAG over 10-K / 10-Q / 8-K', parallel: true },
+  { node: 'market', label: 'Market data', detail: 'price, multiples, peers', parallel: true },
+  { node: 'news', label: 'News scan', detail: 'last 90 days, sentiment-tagged', parallel: true },
+  { node: 'analyst', label: 'Financial analysis', detail: 'deterministic XBRL metrics' },
+  { node: 'writer', label: 'Report writer', detail: 'structured, fully cited draft' },
+  { node: 'critic', label: 'Critic verification', detail: 'NLI entailment + numeric checks' },
+  { node: 'finalize', label: 'Finalize', detail: 'drop unverified, compute cost' },
 ];
 
 type StageState = 'pending' | 'running' | 'done' | 'error';
@@ -34,7 +33,7 @@ type StageState = 'pending' | 'running' | 'done' | 'error';
   template: `
     <div class="pipeline">
       @for (stage of stages(); track stage.node) {
-        <div class="stage {{ stage.state }}" [class.parallel]="stage.parallel">
+        <div class="stage {{ stage.state }}">
           <div class="rail">
             <span class="dot">
               @switch (stage.state) {
@@ -47,7 +46,6 @@ type StageState = 'pending' | 'running' | 'done' | 'error';
           </div>
           <div class="body">
             <div class="line1">
-              <span class="icon">{{ stage.icon }}</span>
               <span class="label">{{ stage.label }}</span>
               @if (stage.parallel) { <span class="par-badge">parallel</span> }
               <span class="state-txt">{{ stage.state }}</span>
@@ -65,49 +63,49 @@ type StageState = 'pending' | 'running' | 'done' | 'error';
     .dot {
       width: 24px; height: 24px; border-radius: 50%;
       display: grid; place-items: center;
-      background: var(--panel-3);
-      border: 1px solid var(--border-strong);
-      color: var(--faint);
-      font-size: 0.72rem; font-weight: 800;
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      color: var(--ink-3);
+      font-size: 0.72rem; font-weight: 700;
       flex-shrink: 0;
-      position: relative;
     }
     .rail::after {
       content: '';
       flex: 1; width: 2px; min-height: 10px;
-      background: var(--panel-3);
+      background: var(--line);
       margin: 2px 0;
     }
     .stage:last-child .rail::after { display: none; }
 
-    .stage.done .dot { background: var(--good-bg); border-color: var(--good); color: var(--good); }
-    .stage.error .dot { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
-    .stage.running .dot { border-color: var(--accent); }
+    .stage.done .dot { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+    .stage.error .dot { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+    .stage.running .dot { border-color: var(--brand-2); }
     .ring {
       width: 10px; height: 10px; border-radius: 50%;
-      background: var(--accent);
+      background: var(--brand-2);
       animation: pulse 1.1s ease-in-out infinite;
     }
 
-    .body { padding-bottom: 0.9rem; min-width: 0; flex: 1; }
-    .line1 { display: flex; align-items: center; gap: 0.5rem; }
-    .icon { font-size: 0.95rem; }
-    .label { font-weight: 650; font-size: 0.92rem; }
-    .stage.pending .label { color: var(--muted); font-weight: 500; }
+    .body { padding-bottom: 0.95rem; min-width: 0; flex: 1; }
+    .line1 { display: flex; align-items: center; gap: 0.55rem; }
+    .label { font-weight: 600; font-size: 0.92rem; color: var(--ink); }
+    .stage.pending .label { color: var(--ink-3); font-weight: 500; }
     .par-badge {
-      font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
-      color: var(--accent-2);
-      border: 1px solid rgba(139, 92, 246, 0.4);
-      border-radius: 999px; padding: 0.05rem 0.45rem;
+      font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--gold);
+      background: var(--gold-soft);
+      border-radius: 999px; padding: 0.08rem 0.5rem;
+      font-weight: 600;
     }
-    .state-txt { margin-left: auto; color: var(--faint); font-size: 0.74rem; }
-    .stage.running .state-txt { color: var(--accent); }
-    .stage.error .state-txt { color: var(--bad); }
+    .state-txt { margin-left: auto; color: var(--ink-3); font-size: 0.73rem; font-family: var(--mono); }
+    .stage.running .state-txt { color: var(--brand-2); }
+    .stage.error .state-txt { color: var(--red); }
     .detail {
-      color: var(--muted); font-size: 0.79rem; margin-top: 0.1rem;
+      color: var(--ink-2); font-size: 0.79rem; margin-top: 0.12rem;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .stage.error .detail { color: var(--bad); white-space: normal; }
+    .stage.pending .detail { color: var(--ink-3); }
+    .stage.error .detail { color: var(--red); white-space: normal; }
   `,
 })
 export class TimelineComponent {

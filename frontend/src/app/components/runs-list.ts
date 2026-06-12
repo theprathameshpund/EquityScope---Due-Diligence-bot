@@ -23,9 +23,7 @@ import { RunSummary } from '../models';
             <div class="info">
               <div class="top">
                 <span class="name">{{ run.company || 'Unknown' }}</span>
-                <span class="status {{ run.status }}">
-                  <i></i>{{ run.status }}
-                </span>
+                <span class="status {{ run.status }}"><i></i>{{ run.status }}</span>
               </div>
               <div class="sub">
                 <span class="when">{{ when(run.updated_at) }}</span>
@@ -41,54 +39,58 @@ import { RunSummary } from '../models';
   `,
   styles: `
     .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
+      background: var(--surface);
       border-radius: var(--radius);
       padding: 1.1rem 1.1rem 1.2rem;
-      box-shadow: var(--shadow-soft);
+      box-shadow: var(--shadow-rest);
     }
-    h3 { margin: 0 0 0.9rem; font-size: 0.95rem; }
-    .empty { color: var(--faint); font-size: 0.82rem; line-height: 1.5; }
-    ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+    h3 {
+      margin: 0 0 0.9rem; font-size: 0.78rem;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--ink-2);
+    }
+    .empty { color: var(--ink-3); font-size: 0.82rem; line-height: 1.5; }
+    ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
     li {
       display: flex; align-items: center; gap: 0.7rem;
-      background: var(--panel-2);
-      border: 1px solid transparent;
       border-radius: var(--radius-sm);
-      padding: 0.55rem 0.7rem;
+      padding: 0.55rem 0.65rem;
       cursor: pointer;
-      transition: border-color 0.15s, transform 0.12s;
+      border: 1px solid transparent;
+      transition: background 0.15s, border-color 0.15s;
     }
-    li:hover { border-color: var(--border-strong); transform: translateX(2px); }
-    li.active { border-color: var(--accent); background: rgba(91, 140, 255, 0.08); }
+    li:hover { background: var(--surface-2); }
+    li.active { background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand-2) 35%, transparent); }
     .avatar {
       flex-shrink: 0;
       width: 34px; height: 34px;
       display: grid; place-items: center;
       border-radius: 9px;
-      background: var(--panel-3);
-      color: var(--text-dim);
-      font-weight: 700; font-size: 0.72rem; letter-spacing: 0.02em;
+      background: var(--surface-2);
+      color: var(--ink-2);
+      font-weight: 700; font-size: 0.7rem; letter-spacing: 0.02em;
+      font-family: var(--mono);
     }
-    li.active .avatar { background: var(--accent-grad); color: #fff; }
+    li.active .avatar { background: var(--brand); color: #f6f3ec; }
     .info { min-width: 0; flex: 1; }
     .top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
     .name {
-      font-weight: 600; font-size: 0.86rem;
+      font-weight: 600; font-size: 0.86rem; color: var(--ink);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .status {
       display: inline-flex; align-items: center; gap: 0.3rem;
-      font-size: 0.68rem; color: var(--muted); flex-shrink: 0;
+      font-size: 0.68rem; color: var(--ink-3); flex-shrink: 0;
     }
-    .status i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
-    .status.done i { background: var(--good); }
-    .status.failed i { background: var(--bad); }
-    .status.running i { background: var(--accent); animation: pulse 1.1s infinite; }
+    .status i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+    .status.done i { background: var(--green); }
+    .status.failed i { background: var(--red); }
+    .status.running i { background: var(--brand-2); animation: pulse 1.1s infinite; }
     .sub {
       display: flex; justify-content: space-between;
-      color: var(--faint); font-size: 0.72rem; margin-top: 0.15rem;
+      color: var(--ink-3); font-size: 0.72rem; margin-top: 0.15rem;
     }
+    .cost { font-family: var(--mono); }
   `,
 })
 export class RunsListComponent {

@@ -16,6 +16,8 @@ const FOCUS_SUGGESTIONS = [
   'AI strategy',
 ];
 
+const THEME_KEY = 'equityscope-theme';
+
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,6 +36,7 @@ export class App implements OnInit, OnDestroy {
   readonly company = signal('');
   readonly focus = signal('');
   readonly formError = signal('');
+  readonly theme = signal<'light' | 'dark'>('light');
 
   readonly health = signal<Health | null>(null);
   readonly runs = signal<RunSummary[]>([]);
@@ -46,6 +49,9 @@ export class App implements OnInit, OnDestroy {
   readonly current = signal<ReportStatus | null>(null);
 
   ngOnInit(): void {
+    const saved = localStorage.getItem(THEME_KEY);
+    const osDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    this.applyTheme(saved === 'dark' || saved === 'light' ? saved : osDark ? 'dark' : 'light');
     this.api.health().subscribe({
       next: (health) => this.health.set(health),
       error: () => this.health.set(null),
@@ -56,6 +62,16 @@ export class App implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.closeStream?.();
     this.stopTimer();
+  }
+
+  toggleTheme(): void {
+    this.applyTheme(this.theme() === 'light' ? 'dark' : 'light');
+  }
+
+  private applyTheme(theme: 'light' | 'dark'): void {
+    this.theme.set(theme);
+    document.documentElement.dataset['theme'] = theme;
+    localStorage.setItem(THEME_KEY, theme);
   }
 
   refreshRuns(): void {

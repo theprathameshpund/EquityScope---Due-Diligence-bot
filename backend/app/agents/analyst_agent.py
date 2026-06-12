@@ -11,7 +11,15 @@ from pydantic import BaseModel, Field
 
 from app.llm.router import LLMRouter, load_prompt
 from app.logging_setup import get_logger
-from app.state import AgentState, Claim, FactValue, FinancialAnalysis, FinancialFacts
+from app.state import (
+    AgentState,
+    Claim,
+    FactValue,
+    FinancialAnalysis,
+    FinancialFacts,
+    InvestmentScorecard,
+    ScorecardDimension,
+)
 from app.tools.metrics import compute_metrics
 from app.tools.xbrl import fetch_financial_facts
 

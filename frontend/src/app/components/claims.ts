@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 import { Claim, EvidenceChunk } from '../models';
 
-/** Verified claims rendered as cards with expandable source citations. */
+/** Verified findings with expandable source citations (editorial style). */
 @Component({
   selector: 'app-claims',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -20,8 +20,7 @@ import { Claim, EvidenceChunk } from '../models';
           @if (claim.citation_chunk_ids.length || claim.metric_ids.length) {
             <details class="cite">
               <summary>
-                {{ claim.citation_chunk_ids.length + claim.metric_ids.length }}
-                source{{ claim.citation_chunk_ids.length + claim.metric_ids.length === 1 ? '' : 's' }}
+                evidence ({{ claim.citation_chunk_ids.length + claim.metric_ids.length }})
               </summary>
               @for (chunkId of claim.citation_chunk_ids; track chunkId) {
                 @if (chunk(chunkId); as found) {
@@ -42,7 +41,7 @@ import { Claim, EvidenceChunk } from '../models';
               }
               @for (metricId of claim.metric_ids; track metricId) {
                 <div class="metric-ref">
-                  🧮 Computed deterministically from SEC XBRL — metric <code>{{ metricId }}</code>
+                  Computed deterministically from SEC XBRL — metric <code>{{ metricId }}</code>
                 </div>
               }
             </details>
@@ -52,13 +51,12 @@ import { Claim, EvidenceChunk } from '../models';
     </ul>
   `,
   styles: `
-    .empty { color: var(--faint); font-style: italic; font-size: 0.88rem; }
-    .claims { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.65rem; }
+    .empty { color: var(--ink-3); font-style: italic; font-size: 0.88rem; }
+    .claims { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.6rem; }
     .claims li {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
+      background: var(--surface-2);
       border-radius: var(--radius-sm);
-      padding: 0.75rem 0.95rem;
+      padding: 0.8rem 1rem;
     }
     .row { display: flex; gap: 0.65rem; align-items: flex-start; }
     .check {
@@ -66,38 +64,39 @@ import { Claim, EvidenceChunk } from '../models';
       width: 19px; height: 19px;
       display: grid; place-items: center;
       border-radius: 50%;
-      background: var(--good-bg);
-      color: var(--good);
-      font-size: 0.7rem; font-weight: 800;
-      margin-top: 0.18rem;
+      background: var(--green-bg);
+      color: var(--green);
+      font-size: 0.68rem; font-weight: 800;
+      margin-top: 0.2rem;
     }
-    .text { margin: 0; line-height: 1.55; font-size: 0.93rem; }
+    .text { margin: 0; line-height: 1.6; font-size: 0.93rem; color: var(--ink); }
 
     .cite { margin: 0.55rem 0 0 1.7rem; }
     .cite summary {
-      cursor: pointer; color: var(--accent); font-size: 0.79rem;
+      cursor: pointer; color: var(--brand-2); font-size: 0.79rem;
       user-select: none;
     }
     .cite summary:hover { text-decoration: underline; }
 
-    .chunk { margin: 0.6rem 0 0; padding: 0.7rem 0.85rem; background: var(--panel-solid); border-radius: 8px; border: 1px solid var(--border); }
+    .chunk { margin: 0.6rem 0 0; padding: 0.75rem 0.9rem; background: var(--surface); border-radius: 8px; box-shadow: var(--shadow-rest); }
     .chunk-head { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.82rem; flex-wrap: wrap; }
     .form-badge {
-      background: rgba(91, 140, 255, 0.14); color: var(--accent);
-      border-radius: 5px; padding: 0.05rem 0.45rem;
-      font-size: 0.72rem; font-weight: 700;
+      background: var(--brand-soft); color: var(--brand);
+      border-radius: 5px; padding: 0.06rem 0.45rem;
+      font-size: 0.7rem; font-weight: 700; font-family: var(--mono);
     }
-    .period { color: var(--faint); }
+    .chunk-head strong { color: var(--ink); }
+    .period { color: var(--ink-3); font-family: var(--mono); font-size: 0.74rem; }
     .chunk-head a { margin-left: auto; font-size: 0.78rem; }
     blockquote {
-      margin: 0.55rem 0 0; padding: 0 0 0 0.8rem;
-      border-left: 2px solid var(--panel-3);
+      margin: 0.55rem 0 0; padding: 0 0 0 0.85rem;
+      border-left: 2px solid var(--gold);
       white-space: pre-wrap;
-      font-size: 0.8rem; color: var(--muted); line-height: 1.55;
+      font-size: 0.8rem; color: var(--ink-2); line-height: 1.6;
       max-height: 14rem; overflow-y: auto;
     }
-    .chunk.missing { color: var(--faint); font-size: 0.82rem; }
-    .metric-ref { font-size: 0.82rem; color: var(--muted); margin-top: 0.55rem; }
+    .chunk.missing { color: var(--ink-3); font-size: 0.82rem; }
+    .metric-ref { font-size: 0.82rem; color: var(--ink-2); margin-top: 0.55rem; }
   `,
 })
 export class ClaimsComponent {
