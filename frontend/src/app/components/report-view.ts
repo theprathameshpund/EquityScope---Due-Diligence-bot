@@ -1,7 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 
-import { Claim, EvidenceChunk, MetricValue, ReportStatus } from '../models';
+import {
+  Claim,
+  EvidenceChunk,
+  MetricValue,
+  ReportStatus,
+} from '../models';
 import { ClaimsComponent } from './claims';
+import { AppIcon } from './icon';
 
 interface NavSection {
   id: string;
@@ -10,14 +16,27 @@ interface NavSection {
   count: number | null;
 }
 
+interface MetricGroup {
+  name: string;
+  metrics: MetricValue[];
+}
+
+const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
+  { name: 'Growth', match: /^revenue_/ },
+  { name: 'Cash flow & quality', match: /^(fcf|accruals|cash_conversion|roic)/ },
+  { name: 'Margins', match: /margin/ },
+  { name: 'Leverage & liquidity', match: /^(debt_to_ebitda|current_ratio)/ },
+  { name: 'Share count', match: /dilution/ },
+];
+
 @Component({
   selector: 'app-report-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ClaimsComponent],
+  imports: [ClaimsComponent, AppIcon],
   template: `
     @if (data().report; as report) {
       <!-- Masthead -->
-      <div class="masthead">
+      <div class="masthead no-print">
         <span class="confidential">Confidential · research use only</span>
         <div class="mode-toggle" role="tablist" aria-label="Report depth">
           <button
@@ -40,26 +59,31 @@ interface NavSection {
         {{ report.company.name }}
         <span class="tick">{{ report.company.ticker }}</span>
         · CIK {{ report.company.cik }}
+        @if (report.company.sector) { · {{ report.company.sector }} }
         · {{ formatDate(report.metadata.generated_at) }}
       </p>
       <div class="gold-rule"></div>
 
       <!-- Verdict cards -->
       <div class="verdicts">
+        @if (report.scorecard.available && report.scorecard.composite_label) {
+          <div class="verdict">
+            <label>Scorecard</label>
+            <b class="tone-{{ labelTone(report.scorecard.composite_label) }}">
+              {{ report.scorecard.composite_label }}
+            </b>
+            <span class="mono-sub">{{ report.scorecard.composite_score.toFixed(1) }} / 5.0 composite</span>
+          </div>
+        }
         <div class="verdict">
           <label>Risk profile</label>
-          <b class="risk-{{ riskProfile().tone }}">● {{ riskProfile().label }}</b>
+          <b class="tone-{{ riskProfile().tone }}">{{ riskProfile().label }}</b>
           <span>{{ riskProfile().detail }}</span>
         </div>
         <div class="verdict">
           <label>Verified claims</label>
           <b>{{ claimCount() }}</b>
           <span>every one cited &amp; checked</span>
-        </div>
-        <div class="verdict">
-          <label>Disclosures</label>
-          <b>{{ report.data_gaps.length }}</b>
-          <span>gaps &amp; dropped content listed</span>
         </div>
         <div class="verdict">
           <label>Run cost</label>
@@ -69,7 +93,7 @@ interface NavSection {
       </div>
 
       <!-- Contents -->
-      <nav class="contents">
+      <nav class="contents no-print">
         @for (section of nav(); track section.id) {
           <a [href]="'#' + section.id">
             <span class="no">{{ section.no }}</span>
@@ -80,9 +104,33 @@ interface NavSection {
       </nav>
 
       <section id="sec-exec">
-        <h3><span class="no">01</span> Executive summary</h3>
+        <h3><span class="no">{{ sectionNo('sec-exec') }}</span> Executive summary</h3>
         <app-claims [claims]="report.executive_summary" [evidence]="evidenceById()" />
       </section>
+
+      @if (report.scorecard.available && report.scorecard.composite_label) {
+        <section id="sec-scorecard">
+          <h3><span class="no">{{ sectionNo('sec-scorecard') }}</span> Investment scorecard</h3>
+          <div class="scorecard-grid">
+            @for (dim of report.scorecard.dimensions; track dim.name) {
+              <div class="score-dim">
+                <div class="score-head">
+                  <span class="dim-name">{{ dim.name }}</span>
+                  <span class="score-val tone-{{ scoreTone(dim.score) }}">{{ dim.score }}/5</span>
+                </div>
+                <div class="score-bar">
+                  @for (i of [1, 2, 3, 4, 5]; track i) {
+                    <div class="bar-seg" [class.filled]="i <= dim.score"></div>
+                  }
+                </div>
+                @if (view() === 'detailed') {
+                  <p class="score-note">{{ dim.rationale }}</p>
+                }
+              </div>
+            }
+          </div>
+        </section>
+      }
 
       @if (view() === 'detailed') {
         <section id="sec-biz">
@@ -99,19 +147,23 @@ interface NavSection {
           @for (tile of headlineTiles(); track tile.id) {
             <div class="tile">
               <label>{{ tile.label }}</label>
-              <b [class.pos]="tile.tone === 'pos'" [class.neg]="tile.tone === 'neg'">{{ tile.value }}</b>
+              <b [class.pos]="tile.tone === 'pos'" [class.neg]="tile.tone === 'neg'">
+                {{ tile.value }}
+                @if (tile.tone === 'pos') { <app-icon name="trend-up" [size]="13" /> }
+                @else if (tile.tone === 'neg') { <app-icon name="trend-down" [size]="13" /> }
+              </b>
               <span>{{ tile.period }}</span>
             </div>
           }
         </div>
 
         @if (view() === 'detailed') {
-          <details class="full-table" open>
-            <summary>All {{ report.financial_health.table.metrics.length }} metrics</summary>
-            <table class="metrics">
-              <thead><tr><th>Metric</th><th>Value</th><th>Period</th></tr></thead>
-              <tbody>
-                @for (metric of report.financial_health.table.metrics; track metric.metric_id) {
+          <table class="metrics">
+            <thead><tr><th>Metric</th><th class="num-h">Value</th><th>Period</th></tr></thead>
+            <tbody>
+              @for (group of metricGroups(); track group.name) {
+                <tr class="group-row"><td colspan="3">{{ group.name }}</td></tr>
+                @for (metric of group.metrics; track metric.metric_id) {
                   <tr>
                     <td>{{ metric.name }}</td>
                     <td class="num" [class.pos]="isPositive(metric)" [class.neg]="isNegative(metric)">
@@ -120,12 +172,102 @@ interface NavSection {
                     <td class="dim">{{ metric.period }}</td>
                   </tr>
                 }
-              </tbody>
-            </table>
-          </details>
+              }
+            </tbody>
+          </table>
           <app-claims [claims]="report.financial_health.commentary" [evidence]="evidenceById()" />
         }
       </section>
+
+      @if (hasValuation() && view() === 'detailed') {
+        <section id="sec-val">
+          <h3><span class="no">{{ sectionNo('sec-val') }}</span> Valuation &amp; market data</h3>
+
+          <div class="tiles">
+            @for (item of valuationTiles(); track item.label) {
+              <div class="tile">
+                <label>{{ item.label }}</label>
+                <b>{{ item.value }}</b>
+              </div>
+            }
+          </div>
+
+          @if (report.valuation.recommendation) {
+            <div class="consensus-row">
+              <span class="pill-badge tone-{{ recTone(report.valuation.recommendation) }}">
+                {{ report.valuation.recommendation.replace('_', ' ') }}
+              </span>
+              @if (report.valuation.num_analysts) {
+                <span class="dim-text">{{ report.valuation.num_analysts }} analysts</span>
+              }
+              @if (report.valuation.target_mean) {
+                <span class="target-range">
+                  Target <b>\${{ report.valuation.target_mean!.toFixed(2) }}</b>
+                  @if (report.valuation.target_high && report.valuation.target_low) {
+                    <span class="dim-text">({{ '$' + report.valuation.target_low!.toFixed(0) }}–{{ '$' + report.valuation.target_high!.toFixed(0) }})</span>
+                  }
+                </span>
+              }
+            </div>
+          }
+
+          @if (report.valuation.peers.length) {
+            <table class="metrics">
+              <thead><tr><th>Peer</th><th class="num-h">P/E</th><th class="num-h">P/S</th><th class="num-h">EV/EBITDA</th><th class="num-h">P/B</th></tr></thead>
+              <tbody>
+                @for (peer of report.valuation.peers; track peer.ticker) {
+                  <tr>
+                    <td><strong>{{ peer.ticker }}</strong></td>
+                    <td class="num">{{ peer.pe_ttm != null ? peer.pe_ttm.toFixed(1) + 'x' : '—' }}</td>
+                    <td class="num">{{ peer.price_to_sales != null ? peer.price_to_sales.toFixed(1) + 'x' : '—' }}</td>
+                    <td class="num">{{ peer.ev_to_ebitda != null ? peer.ev_to_ebitda.toFixed(1) + 'x' : '—' }}</td>
+                    <td class="num">{{ peer.price_to_book != null ? peer.price_to_book.toFixed(1) + 'x' : '—' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+
+          <app-claims [claims]="report.valuation.commentary" [evidence]="evidenceById()" />
+        </section>
+      }
+
+      @if (hasEarningsQuality() && view() === 'detailed') {
+        <section id="sec-eq">
+          <h3><span class="no">{{ sectionNo('sec-eq') }}</span> Earnings quality</h3>
+          @if (report.earnings_quality.quality_label) {
+            <span class="pill-badge tone-{{ eqTone(report.earnings_quality.quality_label) }}">
+              {{ report.earnings_quality.quality_label }} quality
+            </span>
+          }
+          <div class="tiles" style="margin-top: 0.9rem;">
+            @if (report.earnings_quality.accruals_ratio != null) {
+              <div class="tile">
+                <label>Accruals ratio</label>
+                <b [class.pos]="report.earnings_quality.accruals_ratio! < 2"
+                   [class.neg]="report.earnings_quality.accruals_ratio! > 10">
+                  {{ report.earnings_quality.accruals_ratio!.toFixed(2) }}%
+                </b>
+                <span>lower is better</span>
+              </div>
+            }
+            @if (report.earnings_quality.cash_conversion != null) {
+              <div class="tile">
+                <label>Cash conversion</label>
+                <b [class.pos]="report.earnings_quality.cash_conversion! >= 1"
+                   [class.neg]="report.earnings_quality.cash_conversion! < 0.8">
+                  {{ report.earnings_quality.cash_conversion!.toFixed(2) }}x
+                </b>
+                <span>OCF / net income</span>
+              </div>
+            }
+          </div>
+          @for (flag of report.earnings_quality.flags; track flag) {
+            <p class="gap"><app-icon name="alert" [size]="13" /> {{ flag }}</p>
+          }
+          <app-claims [claims]="report.earnings_quality.commentary" [evidence]="evidenceById()" />
+        </section>
+      }
 
       <section id="sec-risk">
         <h3><span class="no">{{ sectionNo('sec-risk') }}</span> Risk matrix</h3>
@@ -136,8 +278,8 @@ interface NavSection {
               <div class="risk-head">
                 <strong>{{ risk.title }}</strong>
                 <div class="badges">
-                  <span class="badge b-{{ risk.severity }}">{{ risk.severity }} severity</span>
-                  <span class="badge b-{{ risk.likelihood }}">{{ risk.likelihood }} likelihood</span>
+                  <span class="badge tone-{{ sevTone(risk.severity) }}">{{ risk.severity }} severity</span>
+                  <span class="badge tone-{{ sevTone(risk.likelihood) }}">{{ risk.likelihood }} likelihood</span>
                 </div>
               </div>
               @if (view() === 'detailed') {
@@ -163,10 +305,68 @@ interface NavSection {
           }
           @for (flag of report.red_flags; track flag.claim_id) {
             <div class="flag-band">
-              <span class="flag-label">⚑ Red flag</span>
+              <span class="flag-label"><app-icon name="flag" [size]="11" /> Red flag</span>
               <p>{{ flag.text }}</p>
             </div>
           }
+        </section>
+      }
+
+      @if (hasInsiders() && view() === 'detailed') {
+        <section id="sec-insider">
+          <h3><span class="no">{{ sectionNo('sec-insider') }}</span> Insider activity <span class="h-note">SEC Form 4</span></h3>
+          <div class="consensus-row">
+            <span class="pill-badge tone-{{ sentimentTone(report.insider_activity.sentiment) }}">
+              {{ report.insider_activity.sentiment }}
+            </span>
+            <span class="dim-text">
+              Net shares:
+              <b [class.pos]="report.insider_activity.net_shares > 0"
+                 [class.neg]="report.insider_activity.net_shares < 0">
+                {{ report.insider_activity.net_shares > 0 ? '+' : '' }}{{ report.insider_activity.net_shares.toLocaleString() }}
+              </b>
+            </span>
+            @if (report.insider_activity.net_value) {
+              <span class="dim-text">
+                Net value:
+                <b [class.pos]="report.insider_activity.net_value > 0"
+                   [class.neg]="report.insider_activity.net_value < 0">
+                  {{ report.insider_activity.net_value > 0 ? '+' : '−' }}\${{ absMillions(report.insider_activity.net_value) }}M
+                </b>
+              </span>
+            }
+          </div>
+          <table class="metrics">
+            <thead><tr><th>Insider</th><th>Title</th><th>Type</th><th class="num-h">Shares</th><th>Date</th></tr></thead>
+            <tbody>
+              @for (txn of report.insider_activity.transactions.slice(0, 10); track txn.name + txn.date) {
+                <tr>
+                  <td>{{ txn.name }}</td>
+                  <td class="dim">{{ txn.title || '—' }}</td>
+                  <td>
+                    <span class="badge tone-{{ txn.transaction_type === 'Purchase' ? 'good' : 'bad' }}">
+                      {{ txn.transaction_type }}
+                    </span>
+                  </td>
+                  <td class="num">{{ txn.shares.toLocaleString() }}</td>
+                  <td class="dim">{{ txn.date }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <app-claims [claims]="report.insider_activity.commentary" [evidence]="evidenceById()" />
+        </section>
+      }
+
+      @if (report.management_questions.length && view() === 'detailed') {
+        <section id="sec-questions">
+          <h3><span class="no">{{ sectionNo('sec-questions') }}</span> Questions for management</h3>
+          <p class="note">Generated from detected anomalies and data gaps — bring these to the next earnings call.</p>
+          <ol class="question-list">
+            @for (q of report.management_questions; track q) {
+              <li>{{ q }}</li>
+            }
+          </ol>
         </section>
       }
 
@@ -175,7 +375,7 @@ interface NavSection {
           <h3><span class="no">{{ sectionNo('sec-gaps') }}</span> Data gaps &amp; disclosures</h3>
           <p class="note">Nothing unverifiable ships silently — everything dropped or unavailable is disclosed here.</p>
           @if (view() === 'summary') {
-            <p class="gap-roll">{{ report.data_gaps.length }} disclosure{{ report.data_gaps.length === 1 ? '' : 's' }} — switch to Detailed to read them.</p>
+            <p class="gap">{{ report.data_gaps.length }} disclosure{{ report.data_gaps.length === 1 ? '' : 's' }} — switch to Detailed to read them.</p>
           } @else {
             @for (gap of report.data_gaps; track gap) {
               <p class="gap">{{ gap }}</p>
@@ -186,12 +386,15 @@ interface NavSection {
 
       <div class="foot">
         <span class="provenance">
-          Generated from {{ claimCount() }} verified findings ·
-          models: {{ modelSummary() }}
+          {{ claimCount() }} verified findings · models: {{ modelSummary() }}
         </span>
-        <div class="downloads">
-          <button (click)="download('md')">Markdown</button>
-          <button (click)="download('json')">JSON</button>
+        <div class="downloads no-print">
+          <button class="btn btn-ghost" (click)="download('md')">
+            <app-icon name="download" [size]="14" /> Markdown
+          </button>
+          <button class="btn btn-ghost" (click)="download('json')">
+            <app-icon name="download" [size]="14" /> JSON
+          </button>
         </div>
       </div>
     }
@@ -200,8 +403,8 @@ interface NavSection {
     /* Masthead */
     .masthead { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
     .confidential {
-      font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase;
-      color: var(--gold); font-weight: 600;
+      font-size: 0.66rem; letter-spacing: 0.13em; text-transform: uppercase;
+      color: var(--gold); font-weight: 650;
     }
     .mode-toggle {
       display: inline-flex;
@@ -211,115 +414,162 @@ interface NavSection {
     }
     .mode-toggle button {
       border: none; background: transparent;
-      padding: 0.34rem 1rem; font-size: 0.8rem;
+      padding: 0.32rem 1rem; font-size: 0.79rem;
       color: var(--ink-2); cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      transition: color 0.15s;
     }
     .mode-toggle button.on { background: var(--brand); color: #f6f3ec; font-weight: 600; }
+    :host-context([data-theme="dark"]) .mode-toggle button.on { color: #10131a; }
 
     /* Title — editorial serif */
     .title {
       font-family: var(--serif);
-      font-size: 1.9rem; font-weight: 600;
+      font-size: 1.85rem; font-weight: 600;
       margin: 0.9rem 0 0.2rem; color: var(--ink);
       letter-spacing: -0.01em;
     }
-    .subtitle { margin: 0; color: var(--ink-2); font-size: 0.9rem; }
+    .subtitle { margin: 0; color: var(--ink-2); font-size: 0.88rem; }
     .tick {
-      font-family: var(--mono); font-size: 0.74rem; font-weight: 600;
+      font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
       background: var(--brand-soft); color: var(--brand);
-      padding: 0.1rem 0.5rem; border-radius: 5px; margin-left: 0.2rem;
+      padding: 0.1rem 0.5rem; border-radius: 5px; margin-left: 0.15rem;
     }
-    .gold-rule { height: 2px; background: var(--gold); opacity: 0.55; margin: 1.1rem 0 1.3rem; }
+    :host-context([data-theme="dark"]) .tick { color: var(--brand-2); }
+    .gold-rule { height: 2px; background: var(--gold); opacity: 0.5; margin: 1.05rem 0 1.25rem; }
 
     /* Verdicts */
     .verdicts {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 0.8rem; margin-bottom: 1.4rem;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 0.8rem; margin-bottom: 1.35rem;
     }
     .verdict {
       background: var(--surface-2);
       border-radius: var(--radius-sm);
       padding: 0.85rem 1rem;
-      display: flex; flex-direction: column; gap: 0.18rem;
+      display: flex; flex-direction: column; gap: 0.16rem;
     }
     .verdict label {
-      color: var(--ink-3); font-size: 0.66rem;
-      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+      color: var(--ink-3); font-size: 0.64rem;
+      text-transform: uppercase; letter-spacing: 0.09em; font-weight: 650;
     }
-    .verdict b { font-size: 1.12rem; color: var(--ink); }
+    .verdict b { font-size: 1.1rem; color: var(--ink); }
     .verdict b.mono { font-family: var(--mono); font-weight: 500; }
-    .verdict span { color: var(--ink-3); font-size: 0.72rem; }
-    .risk-low { color: var(--green) !important; }
-    .risk-medium { color: var(--amber) !important; }
-    .risk-high { color: var(--red) !important; }
+    .verdict span { color: var(--ink-3); font-size: 0.71rem; }
+    .verdict .mono-sub { font-family: var(--mono); }
+    .tone-good { color: var(--green) !important; }
+    .tone-warn { color: var(--amber) !important; }
+    .tone-bad { color: var(--red) !important; }
 
     /* Contents */
     .contents {
-      display: flex; gap: 0.45rem; flex-wrap: wrap;
-      position: sticky; top: 66px; z-index: 5;
-      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      display: flex; gap: 0.4rem; flex-wrap: wrap;
+      position: sticky; top: 56px; z-index: 5;
+      background: color-mix(in srgb, var(--surface) 93%, transparent);
       backdrop-filter: blur(8px);
-      padding: 0.6rem 0; margin-bottom: 0.4rem;
+      padding: 0.55rem 0; margin-bottom: 0.3rem;
     }
     .contents a {
-      display: inline-flex; align-items: center; gap: 0.45rem;
-      padding: 0.3rem 0.8rem; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 0.42rem;
+      padding: 0.28rem 0.78rem; border-radius: 999px;
       border: 1px solid var(--line-strong);
-      color: var(--ink-2); font-size: 0.78rem;
-      transition: all 0.15s;
+      color: var(--ink-2); font-size: 0.76rem;
+      transition: color 0.15s, border-color 0.15s;
     }
     .contents a:hover { color: var(--ink); border-color: var(--brand-2); text-decoration: none; }
-    .contents .no { font-family: var(--mono); font-size: 0.68rem; color: var(--gold); font-weight: 500; }
-    .count { background: var(--surface-2); border-radius: 999px; padding: 0 0.42rem; font-size: 0.7rem; color: var(--ink-2); }
+    .contents .no { font-family: var(--mono); font-size: 0.65rem; color: var(--gold); font-weight: 500; }
+    .count { background: var(--surface-2); border-radius: 999px; padding: 0 0.4rem; font-size: 0.68rem; color: var(--ink-2); }
 
-    section { margin-top: 1.8rem; scroll-margin-top: 130px; }
+    section { margin-top: 1.75rem; scroll-margin-top: 124px; }
     h3 {
       font-family: var(--serif);
       display: flex; align-items: baseline; gap: 0.6rem;
-      font-size: 1.22rem; font-weight: 600; margin: 0 0 0.8rem;
+      font-size: 1.18rem; font-weight: 600; margin: 0 0 0.8rem;
       padding-bottom: 0.45rem; border-bottom: 1px solid var(--line);
       color: var(--ink);
     }
-    h3 .no { font-family: var(--mono); font-size: 0.78rem; color: var(--gold); font-weight: 500; }
-    .note { color: var(--ink-3); font-size: 0.82rem; margin: -0.3rem 0 0.8rem; }
+    h3 .no { font-family: var(--mono); font-size: 0.74rem; color: var(--gold); font-weight: 500; }
+    .h-note { font-family: var(--font); font-size: 0.72rem; color: var(--ink-3); font-weight: 450; margin-left: auto; }
+    .note { color: var(--ink-3); font-size: 0.81rem; margin: -0.3rem 0 0.8rem; }
+
+    /* Scorecard */
+    .scorecard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+      gap: 0.8rem;
+    }
+    .score-dim {
+      background: var(--surface-2);
+      border-radius: var(--radius-sm); padding: 0.8rem 1rem;
+    }
+    .score-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem; }
+    .dim-name { font-size: 0.86rem; font-weight: 600; color: var(--ink); }
+    .score-val { font-size: 0.78rem; font-weight: 650; font-family: var(--mono); }
+    .score-bar { display: flex; gap: 3px; }
+    .bar-seg { height: 4px; flex: 1; border-radius: 999px; background: var(--line-strong); }
+    .bar-seg.filled { background: var(--brand-2); }
+    .score-note { color: var(--ink-2); font-size: 0.77rem; margin: 0.5rem 0 0; line-height: 1.5; }
 
     /* Tiles */
     .tiles {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
       gap: 0.8rem; margin-bottom: 1rem;
     }
     .tile {
       background: var(--surface-2);
-      border-radius: var(--radius-sm); padding: 0.8rem 1rem;
-      display: flex; flex-direction: column; gap: 0.15rem;
+      border-radius: var(--radius-sm); padding: 0.78rem 0.95rem;
+      display: flex; flex-direction: column; gap: 0.14rem;
     }
-    .tile label { color: var(--ink-2); font-size: 0.74rem; }
-    .tile b { font-size: 1.28rem; font-family: var(--mono); font-weight: 500; color: var(--ink); }
-    .tile span { color: var(--ink-3); font-size: 0.7rem; font-family: var(--mono); }
+    .tile label { color: var(--ink-2); font-size: 0.73rem; }
+    .tile b {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      font-size: 1.24rem; font-family: var(--mono); font-weight: 500; color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+    .tile span { color: var(--ink-3); font-size: 0.69rem; font-family: var(--mono); }
     .pos { color: var(--green) !important; }
     .neg { color: var(--red) !important; }
 
-    .full-table { margin-bottom: 1rem; }
-    .full-table summary { cursor: pointer; color: var(--brand-2); font-size: 0.84rem; margin-bottom: 0.5rem; }
-    .metrics { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    /* Tables */
+    .metrics { width: 100%; border-collapse: collapse; font-size: 0.86rem; margin-bottom: 1rem; }
     .metrics th {
-      text-align: left; color: var(--ink-3); font-weight: 600;
-      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+      text-align: left; color: var(--ink-3); font-weight: 650;
+      font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.07em;
       background: var(--surface-2);
     }
-    .metrics th, .metrics td { padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line); }
+    .metrics th.num-h { text-align: right; }
+    .metrics th, .metrics td { padding: 0.48rem 0.7rem; border-bottom: 1px solid var(--line); }
     .metrics tbody tr:hover { background: var(--surface-2); }
-    .num { font-family: var(--mono); font-size: 0.84rem; }
-    .dim { color: var(--ink-3); font-family: var(--mono); font-size: 0.78rem; }
+    .group-row td {
+      font-size: 0.68rem; font-weight: 650; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--gold);
+      padding-top: 0.85rem; border-bottom-color: var(--line-strong);
+      background: transparent !important;
+    }
+    .num { font-family: var(--mono); font-size: 0.82rem; text-align: right; font-variant-numeric: tabular-nums; }
+    .dim { color: var(--ink-3); font-family: var(--mono); font-size: 0.76rem; }
+    .dim-text { color: var(--ink-2); font-size: 0.84rem; }
+
+    /* Pills & badges */
+    .pill-badge {
+      display: inline-flex; align-items: center;
+      padding: 0.26rem 0.85rem; border-radius: 999px;
+      font-size: 0.78rem; font-weight: 650;
+      text-transform: capitalize;
+      background: var(--surface-2);
+    }
+    .pill-badge.tone-good { background: var(--green-bg); }
+    .pill-badge.tone-warn { background: var(--amber-bg); }
+    .pill-badge.tone-bad { background: var(--red-bg); }
+    .consensus-row { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; margin: 0.3rem 0 1rem; }
+    .target-range { font-size: 0.86rem; color: var(--ink-2); }
+    .target-range b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
 
     /* Risks */
-    .risk-grid { display: flex; flex-direction: column; gap: 0.85rem; }
+    .risk-grid { display: flex; flex-direction: column; gap: 0.8rem; }
     .risk {
       border-left: 3px solid var(--line-strong);
-      border-radius: 0;
       background: var(--surface-2);
       border-top-right-radius: var(--radius-sm);
       border-bottom-right-radius: var(--radius-sm);
@@ -332,35 +582,48 @@ interface NavSection {
       display: flex; justify-content: space-between; align-items: center;
       gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.4rem;
     }
-    .risk-head strong { font-family: var(--serif); font-size: 1rem; color: var(--ink); }
+    .risk-head strong { font-family: var(--serif); font-size: 0.99rem; color: var(--ink); }
     .badges { display: flex; gap: 0.4rem; }
-    .badge { font-size: 0.7rem; padding: 0.16rem 0.6rem; border-radius: 999px; font-weight: 600; }
-    .badge.b-high { color: var(--red); background: var(--red-bg); }
-    .badge.b-medium { color: var(--amber); background: var(--amber-bg); }
-    .badge.b-low { color: var(--green); background: var(--green-bg); }
+    .badge {
+      font-size: 0.69rem; padding: 0.15rem 0.6rem; border-radius: 999px;
+      font-weight: 600; background: var(--surface-3); color: var(--ink-2);
+    }
+    .badge.tone-bad { color: var(--red); background: var(--red-bg); }
+    .badge.tone-warn { color: var(--amber); background: var(--amber-bg); }
+    .badge.tone-good { color: var(--green); background: var(--green-bg); }
 
     /* Red flags */
     .flag-band {
       background: var(--red-bg);
       border-left: 3px solid var(--red);
-      border-radius: 0;
       border-top-right-radius: var(--radius-sm);
       border-bottom-right-radius: var(--radius-sm);
       padding: 0.85rem 1.1rem; margin-bottom: 0.7rem;
     }
     .flag-label {
-      font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase;
       color: var(--red); font-weight: 700;
     }
-    .flag-band p { margin: 0.3rem 0 0; font-family: var(--serif); font-size: 0.98rem; color: var(--ink); }
+    .flag-band p { margin: 0.3rem 0 0; font-family: var(--serif); font-size: 0.97rem; color: var(--ink); max-width: 72ch; }
 
-    .gap, .gap-roll {
+    /* Questions */
+    .question-list { padding-left: 1.3rem; margin: 0; }
+    .question-list li {
+      padding: 0.42rem 0; border-bottom: 1px solid var(--line);
+      font-size: 0.9rem; line-height: 1.55; color: var(--ink);
+      max-width: 72ch;
+    }
+    .question-list li:last-child { border-bottom: none; }
+    .question-list li::marker { color: var(--gold); font-family: var(--mono); font-size: 0.8rem; }
+
+    .gap {
+      display: flex; align-items: flex-start; gap: 0.5rem;
       background: var(--amber-bg);
       border-left: 3px solid var(--amber);
-      border-radius: 0;
       border-top-right-radius: 6px; border-bottom-right-radius: 6px;
       padding: 0.55rem 0.9rem;
-      font-size: 0.84rem; color: var(--ink-2);
+      font-size: 0.83rem; color: var(--ink-2);
       margin: 0 0 0.5rem;
     }
 
@@ -368,17 +631,9 @@ interface NavSection {
     .foot {
       display: flex; justify-content: space-between; align-items: center;
       gap: 1rem; flex-wrap: wrap;
-      margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
+      margin-top: 2rem; padding-top: 1.1rem; border-top: 1px solid var(--line);
     }
-    .provenance { color: var(--ink-3); font-size: 0.74rem; font-family: var(--mono); }
-    .downloads { display: flex; gap: 0.7rem; }
-    .downloads button {
-      background: var(--surface); color: var(--ink);
-      border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
-      padding: 0.5rem 1.1rem; cursor: pointer; font-size: 0.85rem;
-      transition: border-color 0.15s, transform 0.12s;
-    }
-    .downloads button:hover { border-color: var(--brand-2); transform: translateY(-1px); }
+    .provenance { color: var(--ink-3); font-size: 0.72rem; font-family: var(--mono); }
   `,
 })
 export class ReportViewComponent {
@@ -395,16 +650,31 @@ export class ReportViewComponent {
 
   readonly claimCount = computed(() => this.allClaims().length);
 
+  readonly hasValuation = computed(() => {
+    const v = this.data().report?.valuation;
+    return !!(v && (v.pe_ttm != null || v.forward_pe != null || v.recommendation || v.peers?.length));
+  });
+
+  readonly hasEarningsQuality = computed(() => {
+    const eq = this.data().report?.earnings_quality;
+    return !!(eq && (eq.accruals_ratio != null || eq.cash_conversion != null));
+  });
+
+  readonly hasInsiders = computed(() => {
+    const ins = this.data().report?.insider_activity;
+    return !!(ins?.available && ins.transactions?.length);
+  });
+
   readonly riskProfile = computed(() => {
     const report = this.data().report;
-    if (!report) return { label: 'Unknown', tone: 'medium', detail: '' };
+    if (!report) return { label: 'Unknown', tone: 'warn', detail: '' };
     const high = report.risk_matrix.filter((risk) => risk.severity === 'high').length;
     const medium = report.risk_matrix.filter((risk) => risk.severity === 'medium').length;
     const low = report.risk_matrix.filter((risk) => risk.severity === 'low').length;
     const detail = `${high} high · ${medium} medium · ${low} low`;
-    if (high > 0 || report.red_flags.length > 0) return { label: 'Elevated', tone: 'high', detail };
-    if (medium > 0) return { label: 'Moderate', tone: 'medium', detail };
-    return { label: 'Low', tone: 'low', detail };
+    if (high > 0 || report.red_flags.length > 0) return { label: 'Elevated', tone: 'bad', detail };
+    if (medium > 0) return { label: 'Moderate', tone: 'warn', detail };
+    return { label: 'Low', tone: 'good', detail };
   });
 
   readonly nav = computed<NavSection[]>(() => {
@@ -418,13 +688,40 @@ export class ReportViewComponent {
       sections.push({ id, no: index.toString().padStart(2, '0'), label, count });
     };
     push('sec-exec', 'Summary', report.executive_summary.length);
+    if (report.scorecard.available && report.scorecard.composite_label) {
+      push('sec-scorecard', 'Scorecard', null);
+    }
     if (detailed) push('sec-biz', 'Business', report.business_overview.length);
     push('sec-fin', 'Financials', report.financial_health.table.metrics.length);
+    if (detailed && this.hasValuation()) push('sec-val', 'Valuation', null);
+    if (detailed && this.hasEarningsQuality()) push('sec-eq', 'Earnings quality', null);
     push('sec-risk', 'Risks', report.risk_matrix.length);
     if (detailed) push('sec-dev', 'Developments', report.recent_developments.length);
     if (detailed || report.red_flags.length) push('sec-flags', 'Red flags', report.red_flags.length);
+    if (detailed && this.hasInsiders()) {
+      push('sec-insider', 'Insiders', report.insider_activity.transactions.length);
+    }
+    if (detailed && report.management_questions.length) {
+      push('sec-questions', 'Questions', report.management_questions.length);
+    }
     if (report.data_gaps.length) push('sec-gaps', 'Disclosures', report.data_gaps.length);
     return sections;
+  });
+
+  readonly metricGroups = computed<MetricGroup[]>(() => {
+    const report = this.data().report;
+    if (!report) return [];
+    const groups = new Map<string, MetricValue[]>();
+    for (const metric of report.financial_health.table.metrics) {
+      const rule = METRIC_GROUP_RULES.find((r) => r.match.test(metric.metric_id));
+      const name = rule?.name ?? 'Other';
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name)!.push(metric);
+    }
+    const order = [...METRIC_GROUP_RULES.map((r) => r.name), 'Other'];
+    return order
+      .filter((name) => groups.has(name))
+      .map((name) => ({ name, metrics: groups.get(name)! }));
   });
 
   readonly headlineTiles = computed(() => {
@@ -438,6 +735,7 @@ export class ReportViewComponent {
       { id: 'fcf_margin', label: 'FCF margin' },
       { id: 'debt_to_ebitda', label: 'Debt / EBITDA' },
       { id: 'current_ratio', label: 'Current ratio' },
+      { id: 'roic', label: 'ROIC' },
       { id: 'share_dilution', label: 'Share count change' },
     ];
     return picks
@@ -445,7 +743,7 @@ export class ReportViewComponent {
         const metric = byId.get(id);
         if (!metric) return null;
         let tone: 'pos' | 'neg' | '' = '';
-        if (id === 'revenue_growth_yoy' || id === 'revenue_cagr_3y' || id === 'fcf_margin') {
+        if (id === 'revenue_growth_yoy' || id === 'revenue_cagr_3y' || id === 'fcf_margin' || id === 'roic') {
           tone = metric.value >= 0 ? 'pos' : 'neg';
         }
         if (id === 'share_dilution') tone = metric.value <= 0 ? 'pos' : 'neg';
@@ -456,8 +754,57 @@ export class ReportViewComponent {
       .filter((tile): tile is NonNullable<typeof tile> => tile !== null);
   });
 
+  readonly valuationTiles = computed(() => {
+    const v = this.data().report?.valuation;
+    if (!v) return [];
+    const tiles: { label: string; value: string }[] = [];
+    if (v.pe_ttm != null) tiles.push({ label: 'Trailing P/E', value: v.pe_ttm.toFixed(1) + 'x' });
+    if (v.forward_pe != null) tiles.push({ label: 'Forward P/E', value: v.forward_pe.toFixed(1) + 'x' });
+    if (v.ev_to_ebitda != null) tiles.push({ label: 'EV/EBITDA', value: v.ev_to_ebitda.toFixed(1) + 'x' });
+    if (v.price_to_sales != null) tiles.push({ label: 'P/Sales', value: v.price_to_sales.toFixed(1) + 'x' });
+    if (v.price_to_book != null) tiles.push({ label: 'P/Book', value: v.price_to_book.toFixed(1) + 'x' });
+    if (v.beta != null) tiles.push({ label: 'Beta', value: v.beta.toFixed(2) });
+    if (v.dividend_yield != null) tiles.push({ label: 'Dividend yield', value: (v.dividend_yield * 100).toFixed(2) + '%' });
+    if (v.short_percent_float != null) tiles.push({ label: 'Short interest', value: (v.short_percent_float * 100).toFixed(1) + '%' });
+    return tiles;
+  });
+
   sectionNo(id: string): string {
     return this.nav().find((section) => section.id === id)?.no ?? '··';
+  }
+
+  labelTone(label: string): string {
+    const lower = label.toLowerCase();
+    if (lower.includes('buy')) return 'good';
+    if (lower.includes('hold')) return 'warn';
+    return 'bad';
+  }
+
+  scoreTone(score: number): string {
+    return score >= 4 ? 'good' : score === 3 ? 'warn' : 'bad';
+  }
+
+  recTone(rec: string): string {
+    if (rec.includes('buy')) return 'good';
+    if (rec === 'hold') return 'warn';
+    return 'bad';
+  }
+
+  eqTone(label: string): string {
+    const lower = label.toLowerCase();
+    return lower === 'high' ? 'good' : lower === 'medium' ? 'warn' : 'bad';
+  }
+
+  sentimentTone(sentiment: string): string {
+    return sentiment === 'bullish' ? 'good' : sentiment === 'bearish' ? 'bad' : 'warn';
+  }
+
+  sevTone(level: string): string {
+    return level === 'high' ? 'bad' : level === 'medium' ? 'warn' : 'good';
+  }
+
+  absMillions(value: number): string {
+    return (Math.abs(value) / 1e6).toFixed(1);
   }
 
   modelSummary(): string {
@@ -474,6 +821,9 @@ export class ReportViewComponent {
       ...report.executive_summary,
       ...report.business_overview,
       ...report.financial_health.commentary,
+      ...(report.valuation.commentary),
+      ...(report.earnings_quality.commentary),
+      ...(report.insider_activity.commentary),
       ...report.risk_matrix.flatMap((risk) => risk.claims),
       ...report.recent_developments,
       ...report.red_flags,

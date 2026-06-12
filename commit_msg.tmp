@@ -1,18 +1,24 @@
-﻿Banker's Daylight design system applied to Angular frontend
+﻿Production-grade UI pass: icon system, app shell, report integrity
 
-Implements docs/DESIGN_SPEC.md visual direction in the live app:
-- Light-first token sheet (warm paper, charcoal ink, slate-blue brand,
-  muted gold accents) + fully tuned dark mode via data-theme attribute;
-  toggle in header, persisted, defaults to OS preference
-- Editorial report: Source Serif 4 masthead and section headings, gold
-  section numbers and rule, CONFIDENTIAL marker, ticker chip
-- Verdict cards row incl. derived risk profile from the risk matrix
-- Summary/Detailed report toggle with dynamic contiguous section
-  numbering; summary collapses to exec summary, tiles, risk titles
-- Red flag bands, gold-ruled citation blockquotes, verified-claim
-  checkmarks, mono tabular numerals across data
-- Restyled header pills, pipeline stepper, runs sidebar, how-it-works
-- Inter / Source Serif 4 / JetBrains Mono with system fallbacks;
-  reduced-motion support; body transition removed (Chromium quirk)
+- AppIcon: inline stroke SVG icon set (no emoji/unicode glyphs, no icon
+  font/CDN dependency); replaced every emoji across the app, including
+  mojibake section headings that had corrupted encoding
+- Slim 56px app shell: brand mark, single rolled-up system status dot
+  (operational/degraded/offline), divider, SVG theme toggle
+- Hero: micro-label + headline replaces numbered-circle gimmick; shared
+  .btn system with focus rings; refined chips and inline validation
+- Runs sidebar: search filter, All/Done/Failed status tabs, skeleton
+  loading rows, count badge
+- Pipeline: overall progress bar, mono stage indices, SVG state glyphs
+- Report rebuilt on current data model (scorecard, valuation, earnings
+  quality, insider activity, management questions all preserved):
+  fixed undefined legacy CSS variables, serif editorial masthead with
+  Summary/Detailed toggle, verdict cards, grouped metrics table with
+  gold group headers, theme-safe tone classes for score/recommendation
+  pills, red-flag bands, 72ch measure caps, print stylesheet
+- Theme correctness: :host-context() for dark selectors inside scoped
+  component styles; removed background transitions that froze repaints
+  on ancestor variable swaps in Chromium
+- Zero-warning production build; skeletons for report loading
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

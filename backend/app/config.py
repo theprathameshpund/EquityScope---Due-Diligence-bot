@@ -58,10 +58,12 @@ class Settings(BaseSettings):
     llm_request_timeout_s: float = Field(default=60.0, gt=0)
 
     # Proactive client-side pacing so runs never slam into provider 429s.
-    # Defaults match Groq's free tier; set 0 to disable a given cap.
+    # Groq free tier: llama-3.1-8b-instant = 20k TPM / 30 RPM;
+    #                  llama-3.3-70b-versatile = 6k TPM / 30 RPM.
+    # Setting smart TPM slightly below the cap gives headroom so we never hit 429.
     groq_max_rpm: int = Field(default=28, ge=0)
-    groq_tpm_fast: int = Field(default=6_000, ge=0)
-    groq_tpm_smart: int = Field(default=12_000, ge=0)
+    groq_tpm_fast: int = Field(default=18_000, ge=0)   # 8b-instant: real limit 20k
+    groq_tpm_smart: int = Field(default=5_500, ge=0)   # 70b: real limit 6k
 
     # ── Embeddings ─────────────────────────────────────────────
     embedding_model: str = "BAAI/bge-large-en-v1.5"
@@ -87,7 +89,7 @@ class Settings(BaseSettings):
     rerank_top_n: int = Field(default=5, gt=0)
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     critic_nli_model: str = "cross-encoder/nli-deberta-v3-base"
-    critic_max_revisions: int = Field(default=2, ge=0)
+    critic_max_revisions: int = Field(default=1, ge=0)   # 2 revision passes add 2+ min on free tier
     critic_entailment_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     run_token_budget: int = Field(default=150_000, gt=0)
     filings_lookback_8k_months: int = Field(default=12, gt=0)

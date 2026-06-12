@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { ApiService } from './api.service';
+import { AppIcon } from './components/icon';
 import { ReportViewComponent } from './components/report-view';
 import { RunsListComponent } from './components/runs-list';
 import { TimelineComponent, TimelineRow } from './components/timeline';
@@ -21,7 +22,7 @@ const THEME_KEY = 'equityscope-theme';
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TimelineComponent, ReportViewComponent, RunsListComponent],
+  imports: [FormsModule, AppIcon, TimelineComponent, ReportViewComponent, RunsListComponent],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
@@ -40,13 +41,24 @@ export class App implements OnInit, OnDestroy {
 
   readonly health = signal<Health | null>(null);
   readonly runs = signal<RunSummary[]>([]);
+  readonly runsLoading = signal(true);
   readonly currentRunId = signal<string | null>(null);
   readonly running = signal(false);
+  readonly reportLoading = signal(false);
   readonly timeline = signal<TimelineRow[]>([]);
   readonly tokens = signal(0);
   readonly cost = signal(0);
   readonly elapsed = signal(0);
   readonly current = signal<ReportStatus | null>(null);
+
+  /** Single rolled-up system status for the header. */
+  readonly systemStatus = computed<{ tone: 'ok' | 'warn' | 'down'; label: string }>(() => {
+    const health = this.health();
+    if (!health) return { tone: 'down', label: 'API offline' };
+    const up = [health.qdrant, health.postgres, health.redis].filter(Boolean).length;
+    if (up === 3) return { tone: 'ok', label: 'All systems operational' };
+    return { tone: 'warn', label: `Degraded — ${3 - up} service${up === 2 ? '' : 's'} down` };
+  });
 
   ngOnInit(): void {
     const saved = localStorage.getItem(THEME_KEY);
@@ -76,8 +88,14 @@ export class App implements OnInit, OnDestroy {
 
   refreshRuns(): void {
     this.api.listRuns().subscribe({
-      next: (response) => this.runs.set(response.runs),
-      error: () => this.runs.set([]),
+      next: (response) => {
+        this.runs.set(response.runs);
+        this.runsLoading.set(false);
+      },
+      error: () => {
+        this.runs.set([]);
+        this.runsLoading.set(false);
+      },
     });
   }
 
@@ -118,8 +136,10 @@ export class App implements OnInit, OnDestroy {
     this.currentRunId.set(runId);
     this.timeline.set([]);
     this.current.set(null);
+    this.reportLoading.set(true);
     this.api.getReport(runId).subscribe({
       next: (status) => {
+        this.reportLoading.set(false);
         if (status.status === 'running' || status.status === 'queued') {
           this.running.set(true);
           this.startTimer();
@@ -130,6 +150,7 @@ export class App implements OnInit, OnDestroy {
           this.current.set(status);
         }
       },
+      error: () => this.reportLoading.set(false),
     });
   }
 

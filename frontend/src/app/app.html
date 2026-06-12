@@ -1,48 +1,45 @@
 <header class="topbar">
   <div class="brand">
     <span class="logo-mark">ES</span>
-    <div>
-      <h1 class="wordmark">EquityScope</h1>
-      <p class="tagline">Due diligence copilot · every claim cited &amp; verified</p>
-    </div>
+    <span class="wordmark">EquityScope</span>
+    <span class="env-tag">Due diligence</span>
   </div>
   <div class="top-right">
-    @if (health(); as h) {
-      <div class="health">
-        <span class="pill" [class.up]="h.qdrant"><i></i>Vector DB</span>
-        <span class="pill" [class.up]="h.postgres"><i></i>Checkpoints</span>
-        <span class="pill" [class.up]="h.redis"><i></i>Events</span>
-      </div>
-    } @else {
-      <div class="health"><span class="pill down"><i></i>API offline</span></div>
-    }
+    <div class="sys-status {{ systemStatus().tone }}" [title]="systemStatus().label">
+      <i></i><span>{{ systemStatus().label }}</span>
+    </div>
+    <span class="divider"></span>
     <button
-      class="theme-toggle"
+      class="icon-btn no-print"
       type="button"
       (click)="toggleTheme()"
       [attr.aria-label]="theme() === 'light' ? 'Switch to dark mode' : 'Switch to light mode'"
-      [title]="theme() === 'light' ? 'Dark mode' : 'Light mode'"
     >
-      @if (theme() === 'light') { ☾ } @else { ☀ }
+      @if (theme() === 'light') { <app-icon name="moon" [size]="16" /> }
+      @else { <app-icon name="sun" [size]="16" /> }
     </button>
   </div>
 </header>
 
 <main>
   <aside class="sidebar">
-    <app-runs-list [runs]="runs()" [selected]="currentRunId()" (open)="openRun($event)" />
+    <app-runs-list
+      [runs]="runs()"
+      [loading]="runsLoading()"
+      [selected]="currentRunId()"
+      (open)="openRun($event)"
+    />
   </aside>
 
   <section class="content">
-    <!-- ── 1 · New analysis ──────────────────────────────── -->
+    <!-- ── New analysis ──────────────────────────────────── -->
     <div class="card hero fade-up">
-      <div class="card-head">
-        <span class="step-no">1</span>
-        <div>
-          <h2>New analysis</h2>
-          <p class="hint">Pick any US-listed company. First-time companies take a few extra minutes while SEC filings are downloaded and indexed.</p>
-        </div>
-      </div>
+      <p class="panel-label">New analysis</p>
+      <h2 class="panel-title">Run due diligence on any US-listed company</h2>
+      <p class="panel-hint">
+        Filings are pulled from SEC EDGAR, analyzed by specialist agents, and every claim is
+        verified before it reaches you. First-time companies take a few extra minutes to index.
+      </p>
       <form class="run-form" (ngSubmit)="startRun()">
         <div class="fields">
           <label>
@@ -56,7 +53,7 @@
             />
           </label>
           <label>
-            <span>Focus area <em>(optional)</em></span>
+            <span>Focus area <em>· optional</em></span>
             <input
               name="focus"
               [ngModel]="focus()"
@@ -65,9 +62,9 @@
               autocomplete="off"
             />
           </label>
-          <button class="cta" type="submit" [disabled]="running()">
+          <button class="btn btn-primary cta" type="submit" [disabled]="running()">
             @if (running()) { <span class="spinner"></span> Working… }
-            @else { Run due diligence → }
+            @else { Run analysis <app-icon name="arrow-right" [size]="15" /> }
           </button>
         </div>
         <div class="chips">
@@ -81,19 +78,18 @@
           }
         </div>
         @if (formError()) {
-          <p class="error">{{ formError() }}</p>
+          <p class="error"><app-icon name="alert" [size]="14" /> {{ formError() }}</p>
         }
       </form>
     </div>
 
-    <!-- ── 2 · Agent pipeline (live) ─────────────────────── -->
+    <!-- ── Agent pipeline (live) ─────────────────────────── -->
     @if (running() || timeline().length) {
-      <div class="card fade-up">
-        <div class="card-head">
-          <span class="step-no">2</span>
+      <div class="card pipeline-card fade-up">
+        <div class="pipeline-head">
           <div>
-            <h2>Agent pipeline</h2>
-            <p class="hint">Each agent reports progress live. Filings, market and news research run in parallel.</p>
+            <p class="panel-label">Live run</p>
+            <h2 class="panel-title small">Agent pipeline</h2>
           </div>
           <div class="meter">
             <div class="m"><label>Tokens</label><b>{{ tokens().toLocaleString() }}</b></div>
@@ -103,42 +99,50 @@
         </div>
         <app-timeline [rows]="timeline()" />
         @if (currentRunId(); as id) {
-          <p class="runid">run id <code>{{ id }}</code> — resumable if interrupted</p>
+          <p class="runid">Run <code>{{ id }}</code> · checkpointed after every stage — resumable if interrupted</p>
         }
       </div>
     }
 
-    <!-- ── 3 · Report ────────────────────────────────────── -->
+    <!-- ── Report / states ───────────────────────────────── -->
+    @if (reportLoading()) {
+      <div class="card fade-up">
+        <div class="skeleton" style="width: 38%; height: 1.6rem; margin-bottom: 1rem;"></div>
+        <div class="skeleton" style="width: 100%; height: 4.5rem; margin-bottom: 0.8rem;"></div>
+        <div class="skeleton" style="width: 100%; height: 4.5rem; margin-bottom: 0.8rem;"></div>
+        <div class="skeleton" style="width: 62%; height: 4.5rem;"></div>
+      </div>
+    }
     @if (current(); as data) {
       @if (data.status === 'done') {
         <app-report-view class="fade-up" [data]="data" />
       } @else if (data.status === 'failed') {
         <div class="card failed fade-up">
-          <h3>✕ Run failed</h3>
+          <h3><app-icon name="x" [size]="15" /> Run failed</h3>
           <p>{{ data.error }}</p>
         </div>
       }
-    } @else if (!running() && !timeline().length) {
+    } @else if (!running() && !timeline().length && !reportLoading()) {
       <div class="card how fade-up">
-        <h2>How it works</h2>
+        <p class="panel-label">How it works</p>
         <div class="how-grid">
           <div class="how-step">
-            <span class="how-no">01</span>
+            <span class="how-icon"><app-icon name="layers" [size]="17" /></span>
             <h4>Ingest</h4>
             <p>The latest 10-K, four 10-Qs and a year of 8-Ks are pulled from SEC EDGAR, parsed section-by-section and indexed.</p>
           </div>
           <div class="how-step">
-            <span class="how-no">02</span>
+            <span class="how-icon"><app-icon name="search" [size]="17" /></span>
             <h4>Research</h4>
             <p>Specialist agents query the filings, fetch market data and scan news — in parallel, guided by your focus area.</p>
           </div>
           <div class="how-step">
-            <span class="how-no">03</span>
+            <span class="how-icon"><app-icon name="activity" [size]="17" /></span>
             <h4>Compute</h4>
             <p>Every financial number is calculated deterministically from XBRL data. The AI never does the math.</p>
           </div>
           <div class="how-step">
-            <span class="how-no">04</span>
+            <span class="how-icon"><app-icon name="shield" [size]="17" /></span>
             <h4>Verify</h4>
             <p>A critic checks every claim against its cited source. Anything unverifiable is revised or dropped — and disclosed.</p>
           </div>

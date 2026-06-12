@@ -85,34 +85,67 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz", response_model=HealthResponse)
     async def healthz() -> HealthResponse:
-        qdrant_ok = postgres_ok = redis_ok = False
-        try:
-            import httpx
+        """
+        Hard 3-second overall timeout — this endpoint NEVER hangs.
+        All three checks run in parallel via asyncio.gather.
+        """
+        import httpx
 
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.get(f"{settings.qdrant_url}/readyz")
-                qdrant_ok = resp.status_code == 200
-        except Exception as exc:
-            log.warning("healthz_qdrant_failed", error=str(exc))
-        def _check_postgres() -> bool:
-            # Sync connect in a thread: psycopg async mode is incompatible
-            # with the Proactor event loop uvicorn uses on Windows.
-            with psycopg.connect(settings.postgres_dsn, connect_timeout=3) as conn:
-                conn.execute("SELECT 1")
-            return True
-
-        try:
-            postgres_ok = await asyncio.to_thread(_check_postgres)
-        except Exception as exc:
-            log.warning("healthz_postgres_failed", error=str(exc))
-        try:
-            client_r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        async def _check_qdrant() -> bool:
             try:
-                redis_ok = bool(await client_r.ping())
-            finally:
-                await client_r.aclose()
+                async with httpx.AsyncClient(timeout=1.5) as client:
+                    r = await client.get(f"{settings.qdrant_url}/readyz")
+                    return r.status_code in (200, 204)
+            except Exception as exc:
+                log.warning("healthz_qdrant_failed", error=str(exc))
+                return False
+
+        async def _check_postgres() -> bool:
+            try:
+                def _sync() -> bool:
+                    import socket
+                    socket.setdefaulttimeout(1.5)
+                    with psycopg.connect(
+                        settings.postgres_dsn, connect_timeout=1
+                    ) as conn:
+                        conn.execute("SELECT 1")
+                    return True
+                return await asyncio.wait_for(asyncio.to_thread(_sync), timeout=2.0)
+            except Exception as exc:
+                log.warning("healthz_postgres_failed", error=str(exc))
+                return False
+
+        async def _check_redis() -> bool:
+            try:
+                client_r = aioredis.from_url(
+                    settings.redis_url, decode_responses=True,
+                    socket_connect_timeout=1, socket_timeout=1,
+                )
+                try:
+                    return bool(await asyncio.wait_for(client_r.ping(), timeout=1.5))
+                finally:
+                    await client_r.aclose()
+            except Exception as exc:
+                log.warning("healthz_redis_failed", error=str(exc))
+                return False
+
+        # Run all checks in parallel; hard outer cap = 3s total
+        try:
+            qdrant_ok, postgres_ok, redis_ok = await asyncio.wait_for(
+                asyncio.gather(
+                    _check_qdrant(),
+                    _check_postgres(),
+                    _check_redis(),
+                    return_exceptions=False,
+                ),
+                timeout=3.0,
+            )
+        except asyncio.TimeoutError:
+            log.warning("healthz_overall_timeout")
+            qdrant_ok = postgres_ok = redis_ok = False
         except Exception as exc:
-            log.warning("healthz_redis_failed", error=str(exc))
+            log.warning("healthz_gather_failed", error=str(exc))
+            qdrant_ok = postgres_ok = redis_ok = False
 
         all_ok = qdrant_ok and postgres_ok and redis_ok
         return HealthResponse(

@@ -15,7 +15,7 @@ from app.state import AgentState, Claim, CriticVerdict, MetricValue, RetrievedEv
 
 log = get_logger(__name__)
 
-# Synthetic chunk IDs injected by the writer from market/news data.
+# Synthetic chunk IDs injected by the writer from market/news/insider data.
 # The critic trusts these as primary sources (they are never LLM-generated).
 _MARKET_CHUNK_PREFIX = "mkt_"
 

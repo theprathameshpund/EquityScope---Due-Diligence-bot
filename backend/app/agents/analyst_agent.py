@@ -122,6 +122,10 @@ class _Commentary(BaseModel):
     claims: list[_CommentaryClaim]
 
 
+class _Questions(BaseModel):
+    questions: list[str]
+
+
 def _write_commentary(
     router: LLMRouter, state: AgentState, analysis: FinancialAnalysis
 ) -> list[Claim]:
@@ -132,7 +136,7 @@ def _write_commentary(
     system = load_prompt("analyst_commentary").format(company=state.company_name)
     try:
         result = router.complete_json(
-            "smart", system, json.dumps(payload), _Commentary, max_tokens=1500
+            "smart", system, json.dumps(payload), _Commentary, max_tokens=800
         )
     except ValueError as exc:
         log.warning("analyst_commentary_failed", error=str(exc))
@@ -148,6 +152,42 @@ def _write_commentary(
             Claim(text=item.text, metric_ids=metric_ids, section="financial_health")
         )
     return claims
+
+
+def _generate_management_questions(
+    router: LLMRouter, state: AgentState, analysis: FinancialAnalysis
+) -> list[str]:
+    """Generate 5-8 probing management questions from red flags + data gaps."""
+    payload = {
+        "company": state.company_name,
+        "ticker": state.ticker,
+        "anomalies": analysis.anomalies,
+        "data_gaps": state.data_gaps,
+        "metrics_summary": [
+            {"id": m.metric_id, "name": m.name, "value": m.value, "unit": m.unit}
+            for m in analysis.metrics[:15]
+        ],
+    }
+    system = load_prompt("management_questions").format(company=state.company_name)
+    try:
+        result = router.complete_json(
+            "fast", system, json.dumps(payload, default=str), _Questions, max_tokens=400
+        )
+        return [q.strip() for q in result.questions if q.strip()][:8]
+    except Exception as exc:
+        log.warning("management_questions_failed", error=str(exc))
+        return []
+
+
+def _recompute_scorecard(analysis: FinancialAnalysis, state: AgentState) -> InvestmentScorecard:
+    """Recompute the scorecard now that full metrics are available.
+
+    The market_agent computes a partial scorecard from market data only.
+    After analyst_agent runs, we redo it with financial metrics included.
+    Import here to avoid a circular import at module level.
+    """
+    from app.agents.market_agent import _compute_scorecard
+    return _compute_scorecard(state.market, analysis)
 
 
 def analyst_node(state: AgentState) -> dict[str, Any]:
@@ -202,14 +242,34 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
     except Exception as exc:
         log.warning("analyst_commentary_skipped", error=str(exc))
 
+    # Recompute scorecard with full financial metrics now available.
+    try:
+        scorecard = _recompute_scorecard(analysis, state)
+    except Exception as exc:
+        log.warning("scorecard_recompute_failed", error=str(exc))
+        scorecard = state.scorecard  # keep the market-only version
+
+    # Generate management questions from anomalies + data gaps.
+    management_questions: list[str] = []
+    try:
+        management_questions = _generate_management_questions(router, state, analysis)
+    except Exception as exc:
+        log.warning("management_questions_skipped", error=str(exc))
+
     log.info(
         "analysis_complete",
         metrics=len(analysis.metrics),
         anomalies=len(analysis.anomalies),
         commentary=len(analysis.commentary),
+        questions=len(management_questions),
         source="xbrl" if not data_gaps else "yfinance",
     )
-    updates = {"facts": facts, "analysis": analysis}
+    updates = {
+        "facts": facts,
+        "analysis": analysis,
+        "scorecard": scorecard,
+        "management_questions": management_questions,
+    }
     if data_gaps:
         updates["data_gaps"] = data_gaps
     return updates
