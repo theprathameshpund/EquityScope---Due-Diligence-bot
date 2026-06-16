@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import uuid
 from functools import lru_cache
+from time import perf_counter
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -45,20 +46,59 @@ def _point_id(chunk_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_id))
 
 
-def upsert_chunks(client: QdrantClient, chunks: list[ChunkRecord], batch_size: int = 64) -> None:
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i : i + batch_size]
-        vectors = embed_passages([c.text for c in batch])
+def upsert_chunks(
+    client: QdrantClient,
+    chunks: list[ChunkRecord],
+    *,
+    upsert_batch_size: int = 128,
+    embed_batch_size: int = 48,
+    progress: callable | None = None,
+) -> None:
+    if not chunks:
+        return
+
+    embedded_count = 0
+    upserted_count = 0
+    total = len(chunks)
+
+    for i in range(0, total, upsert_batch_size):
+        batch = chunks[i : i + upsert_batch_size]
+        if progress is not None:
+            progress(f"Embedding chunks {embedded_count + 1}-{embedded_count + len(batch)} of {total}…")
+
+        t_embed = perf_counter()
+        batch_vectors = embed_passages([c.text for c in batch], batch_size=embed_batch_size)
+        embedded_count += len(batch)
+        log.info(
+            "chunks_embedded_batch",
+            count=len(batch),
+            progress=f"{embedded_count}/{total}",
+            seconds=round(perf_counter() - t_embed, 2),
+            embed_batch_size=embed_batch_size,
+        )
+
+        if progress is not None:
+            progress(f"Indexed embeddings for {embedded_count}/{total} chunks; writing to vector store…")
+
         points = [
             PointStruct(
                 id=_point_id(chunk.chunk_id),
                 vector=vector,
                 payload=chunk.model_dump(),
             )
-            for chunk, vector in zip(batch, vectors, strict=True)
+            for chunk, vector in zip(batch, batch_vectors, strict=True)
         ]
+        t_upsert = perf_counter()
         client.upsert(collection_name=settings.qdrant_collection, points=points)
-        log.info("chunks_upserted", count=len(points), progress=f"{i + len(batch)}/{len(chunks)}")
+        upserted_count += len(points)
+        log.info(
+            "chunks_upserted",
+            count=len(points),
+            progress=f"{upserted_count}/{total}",
+            seconds=round(perf_counter() - t_upsert, 2),
+        )
+        if progress is not None:
+            progress(f"Vector store updated for {upserted_count}/{total} chunks.")
 
 
 _MIN_INDEXED_CHUNKS = 10  # below this threshold → treat as un-indexed and re-ingest
@@ -86,11 +126,17 @@ def is_company_indexed(ticker: str) -> bool:
     return count.count >= _MIN_INDEXED_CHUNKS
 
 
-def ingest_company(query: str, force: bool = False) -> tuple[CompanyIdentity, int]:
+def ingest_company(query: str, force: bool = False, run_id: str = "") -> tuple[CompanyIdentity, int]:
     """Resolve, download, parse, chunk, embed and index a company's filings.
 
     Returns the resolved identity and the number of chunks indexed.
     """
+    from app.agents.orchestrator import publish_event  # local import avoids circular
+
+    def _progress(msg: str) -> None:
+        if run_id:
+            publish_event(run_id, "ingest_check", "start", msg)
+
     edgar = EdgarClient()
     identity = edgar.resolve_company(query)
 
@@ -100,7 +146,8 @@ def ingest_company(query: str, force: bool = False) -> tuple[CompanyIdentity, in
 
     filings = edgar.list_target_filings(identity.cik)
     all_chunks: list[ChunkRecord] = []
-    for filing in filings:
+    for i, filing in enumerate(filings, 1):
+        _progress(f"Downloading filing {i}/{len(filings)}: {filing.form} {filing.report_date or filing.filing_date}")
         try:
             path = edgar.download_filing(identity.ticker, filing)
             html = path.read_text(encoding="utf-8", errors="replace")
@@ -128,9 +175,10 @@ def ingest_company(query: str, force: bool = False) -> tuple[CompanyIdentity, in
             sections=len(sections),
         )
 
+    _progress(f"Embedding {len(all_chunks)} chunks in batches…")
     client = get_qdrant_client()
     ensure_collection(client)
-    upsert_chunks(client, all_chunks)
+    upsert_chunks(client, all_chunks, progress=_progress)
     log.info("ingestion_complete", ticker=identity.ticker, chunks=len(all_chunks))
     edgar.close()
     return identity, len(all_chunks)

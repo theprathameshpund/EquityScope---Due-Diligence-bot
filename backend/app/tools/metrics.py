@@ -194,7 +194,12 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     # ── Free cash flow ────────────────────────────────────────
     ocf = _by_year(facts.facts.get("operating_cash_flow", []))
     capex = _by_year(facts.facts.get("capex", []))
-    fcf_years = sorted(set(ocf) & set(capex))
+    # Intersect with recent revenue years (last 4) to avoid stale XBRL data from old filings
+    recent_revenue_years = set(years)  # years already capped to last 4
+    fcf_years = sorted((set(ocf) & set(capex)) & recent_revenue_years)
+    if not fcf_years:
+        # Fallback: most recent overlap across all available years
+        fcf_years = sorted(set(ocf) & set(capex))[-1:]
     if fcf_years:
         y = fcf_years[-1]
         fcf = ocf[y] - capex[y]
@@ -253,11 +258,12 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     net_income = _by_year(facts.facts.get("net_income", []))
     total_assets = _by_year(facts.facts.get("assets_total", []))
     total_liab = _by_year(facts.facts.get("liabilities_total", []))
-    # Invested capital = total assets - current liabilities (simple approximation)
-    roic_years = sorted(set(net_income) & set(assets_cur) & set(liab_cur))
+    # Invested capital = total assets - total liabilities (≈ shareholders equity)
+    # This avoids the near-zero denominator issue when current_liabilities ≈ total_assets
+    roic_years = sorted(set(net_income) & set(total_assets) & set(total_liab))
     if roic_years:
         y = roic_years[-1]
-        invested_capital = total_assets.get(y, assets_cur.get(y, 0)) - liab_cur[y]
+        invested_capital = total_assets[y] - total_liab[y]  # equity proxy
         if invested_capital > 0 and y in net_income:
             roic = net_income[y] / invested_capital * 100.0
             metrics.append(
@@ -269,7 +275,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
                     period=f"FY{y}",
                     inputs={"net_income": net_income[y],
                             "invested_capital": invested_capital},
-                    formula="net_income / (total_assets - current_liabilities) * 100",
+                    formula="net_income / (total_assets - total_liabilities) * 100",
                 )
             )
             if roic < 0:

@@ -28,11 +28,11 @@ else
     fi
 fi
 
-# Ensure DB + user exist (idempotent)
-sudo -u postgres psql -p 5433 -tc "SELECT 1 FROM pg_roles WHERE rolname='equityscope'" 2>/dev/null | grep -q 1 || \
-    sudo -u postgres psql -p 5433 -c "CREATE ROLE equityscope LOGIN PASSWORD 'equityscope';" 2>/dev/null || true
-sudo -u postgres psql -p 5433 -tc "SELECT 1 FROM pg_database WHERE datname='equityscope'" 2>/dev/null | grep -q 1 || \
-    sudo -u postgres psql -p 5433 -c "CREATE DATABASE equityscope OWNER equityscope;" 2>/dev/null || true
+# Ensure DB + user exist — try without sudo first (works if current user is postgres or has peer auth)
+psql -p 5433 -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='equityscope'" 2>/dev/null | grep -q 1 || \
+    psql -p 5433 -U postgres -c "CREATE ROLE equityscope LOGIN PASSWORD 'equityscope';" 2>/dev/null || true
+psql -p 5433 -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='equityscope'" 2>/dev/null | grep -q 1 || \
+    psql -p 5433 -U postgres -c "CREATE DATABASE equityscope OWNER equityscope;" 2>/dev/null || true
 
 # ─── Redis ─────────────────────────────────────────────────────
 echo "[infra] Checking Redis..."
@@ -71,8 +71,9 @@ else
         echo "[infra] Run: bash scripts/install_qdrant_wsl.sh"
         exit 1
     fi
+    QDRANT__STORAGE__STORAGE_PATH="$QDRANT_DATA" \
     nohup "$QDRANT_BIN" \
-        --storage-path "$QDRANT_DATA" \
+        --disable-telemetry \
         > "$LOG_DIR/qdrant.log" 2>&1 &
     echo $! > "$LOG_DIR/qdrant.pid"
     sleep 3

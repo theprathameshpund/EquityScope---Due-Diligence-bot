@@ -113,13 +113,32 @@ class EdgarClient:
         """Resolve a ticker or company name to its SEC CIK.
 
         Exact ticker match wins; otherwise the first case-insensitive
-        substring match on the registrant name.
+        substring match on the registrant name.  Common brand names that
+        differ from the legal registrant name are handled via an alias map.
         """
+        # Map popular brand names / informal names → canonical SEC ticker
+        _ALIASES: dict[str, str] = {
+            "GOOGLE": "GOOGL",
+            "ALPHABET": "GOOGL",
+            "META": "META",
+            "FACEBOOK": "META",
+            "AMAZON": "AMZN",
+            "MICROSOFT": "MSFT",
+            "APPLE": "AAPL",
+            "NVIDIA": "NVDA",
+            "TESLA": "TSLA",
+            "NETFLIX": "NFLX",
+            "SALESFORCE": "CRM",
+        }
+
         mapping_path = self._cache_dir / "company_tickers.json"
         raw = self._cached_text(COMPANY_TICKERS_URL, mapping_path)
         data: dict[str, dict[str, Any]] = json.loads(raw)
 
         q = query.strip().upper()
+        # Resolve alias first (e.g. "Google" → "GOOGL")
+        q = _ALIASES.get(q, q)
+
         by_ticker: CompanyIdentity | None = None
         by_name: CompanyIdentity | None = None
         for entry in data.values():
@@ -136,7 +155,7 @@ class EdgarClient:
         if identity is None:
             raise ValueError(
                 f"Could not resolve {query!r} to an SEC-registered company. "
-                "Try the exact ticker symbol (e.g. NVDA) or the registrant name."
+                "Try the exact ticker symbol (e.g. NVDA, GOOGL) or the registrant name."
             )
         log.info("company_resolved", query=query, cik=identity.cik, ticker=identity.ticker)
         return identity

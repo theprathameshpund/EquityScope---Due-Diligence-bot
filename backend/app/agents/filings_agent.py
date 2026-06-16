@@ -19,6 +19,7 @@ from app.state import AgentState, RetrievedEvidence
 log = get_logger(__name__)
 
 MIN_RELEVANT_CHUNKS = 2
+MAX_RESEARCH_QUESTIONS = 5
 
 
 class _Questions(BaseModel):
@@ -41,7 +42,7 @@ def _generate_questions(router: LLMRouter, state: AgentState) -> list[str]:
         "fast", system, "Generate the research questions.", _Questions, max_tokens=600
     )
     questions = [q.strip() for q in result.questions if q.strip()]
-    return questions[:8] if len(questions) > 8 else questions
+    return questions[:MAX_RESEARCH_QUESTIONS]
 
 
 def _rewrite_query(router: LLMRouter, question: str, hint: str = "") -> str:
@@ -82,19 +83,21 @@ def _grade_relevance(
 def _research_question(
     router: LLMRouter, question: str, ticker: str
 ) -> list[RetrievedEvidence]:
-    query = _rewrite_query(router, question)
-    candidates = retrieve(query, ticker=ticker)
-    relevant = _grade_relevance(router, question, candidates)
+    # Fast path: use reranker output directly to avoid extra LLM grading calls.
+    # The cross-encoder already returns the most relevant passages.
+    relevant = retrieve(question, ticker=ticker)
     if len(relevant) < MIN_RELEVANT_CHUNKS:
         # Corrective RAG: one rewrite with feedback, then retry.
         retry_query = _rewrite_query(
             router,
             question,
-            hint=f"the query '{query}' returned mostly irrelevant passages; "
-            "use different filing vocabulary",
+            hint=(
+                "the query returned too few relevant passages; "
+                "use filing-specific accounting vocabulary"
+            ),
         )
         retry_candidates = retrieve(retry_query, ticker=ticker)
-        relevant.extend(_grade_relevance(router, question, retry_candidates))
+        relevant.extend(retry_candidates)
     return relevant
 
 

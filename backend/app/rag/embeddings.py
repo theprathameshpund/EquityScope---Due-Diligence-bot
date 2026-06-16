@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from threading import Lock
 from typing import TYPE_CHECKING, cast
 
 from app.config import settings
 from app.logging_setup import get_logger
+
+# Propagate HF_HUB_OFFLINE setting early so sentence-transformers respects it
+if getattr(settings, "hf_hub_offline", False) or os.getenv("HF_HUB_OFFLINE", "0") == "1":
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -16,16 +23,40 @@ log = get_logger(__name__)
 # BGE models are trained with this query-side instruction prefix.
 _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
+_embedder_lock = Lock()
+_embedder_instance: SentenceTransformer | None = None
+
 
 @lru_cache(maxsize=1)
 def get_embedder() -> SentenceTransformer:
-    from sentence_transformers import SentenceTransformer
+    global _embedder_instance
+    if _embedder_instance is not None:
+        return _embedder_instance
 
-    log.info("loading_embedding_model", model=settings.embedding_model)
-    return cast(
-        "SentenceTransformer",
-        SentenceTransformer(settings.embedding_model, device=settings.embedding_device),
-    )
+    with _embedder_lock:
+        if _embedder_instance is not None:
+            return _embedder_instance
+
+        from sentence_transformers import SentenceTransformer
+        import torch
+
+        # Use all available CPU cores — PyTorch defaults to 1 thread on Windows
+        cpu_cores = os.cpu_count() or 4
+        try:
+            torch.set_num_threads(cpu_cores)
+        except RuntimeError as exc:
+            log.warning("torch_num_threads_unchanged", error=str(exc))
+        try:
+            torch.set_num_interop_threads(max(1, cpu_cores // 2))
+        except RuntimeError as exc:
+            log.warning("torch_interop_threads_unchanged", error=str(exc))
+
+        log.info("loading_embedding_model", model=settings.embedding_model, threads=cpu_cores)
+        _embedder_instance = cast(
+            "SentenceTransformer",
+            SentenceTransformer(settings.embedding_model, device=settings.embedding_device),
+        )
+        return _embedder_instance
 
 
 @lru_cache(maxsize=2)
@@ -43,16 +74,29 @@ def embedding_dim() -> int:
     return int(dim)
 
 
-def embed_passages(texts: list[str], batch_size: int = 16) -> list[list[float]]:
-    """Embed document chunks (no instruction prefix), L2-normalized."""
+def embed_passages(texts: list[str], batch_size: int = 32) -> list[list[float]]:
+    """Embed document chunks (no instruction prefix), L2-normalized.
+    
+    Uses bge-small-en-v1.5 for speed (~10x faster than bge-large).
+    Progress is logged for large batches.
+    """
     if not texts:
         return []
+    # Log progress for batches that will take a while
+    total_batches = (len(texts) + batch_size - 1) // batch_size
+    if total_batches > 5:
+        log.info("embedding_passages_start", total_chunks=len(texts), batch_size=batch_size, total_batches=total_batches)
+    
     vectors = get_embedder().encode(
         texts,
         batch_size=batch_size,
         normalize_embeddings=True,
         show_progress_bar=False,
     )
+    
+    if total_batches > 5:
+        log.info("embedding_passages_complete", total_chunks=len(texts))
+    
     return cast("list[list[float]]", vectors.tolist())
 
 

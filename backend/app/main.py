@@ -26,18 +26,23 @@ async def _fail_orphaned_runs() -> None:
     """Runs execute in this process; anything still 'running' at startup was
     killed by a restart. Mark it failed so the UI never waits forever."""
     try:
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        client = aioredis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
         try:
             async for key in client.scan_iter("equityscope:run:*"):
                 raw = await client.get(key)
                 if raw is None:
                     continue
                 data = json.loads(raw)
-                if data.get("status") == "running":
+                if data.get("status") in {"queued", "running"}:
                     run_id = str(data.get("run_id", ""))
                     data["status"] = "failed"
                     data["error"] = (
-                        "API restarted while this run was in progress. Resume it with: "
+                        "API restarted before this run reached a terminal state. Resume it with: "
                         f"python -m app.agents.orchestrator --resume {run_id}"
                     )
                     await client.set(key, json.dumps(data), ex=7 * 24 * 3600)
@@ -52,7 +57,24 @@ async def _fail_orphaned_runs() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     log.info("api_starting", environment=settings.environment)
+    
     await _fail_orphaned_runs()
+    
+    # Start embedding model pre-load in background (non-blocking)
+    # This allows the API to accept requests immediately while the model loads
+    def _background_preload_embeddings() -> None:
+        try:
+            from app.rag.embeddings import get_embedder, embedding_dim
+            log.info("preloading_embedding_model", model=settings.embedding_model)
+            get_embedder()  # triggers lazy load
+            dim = embedding_dim()
+            log.info("embedding_model_ready", dimension=dim)
+        except Exception as exc:
+            log.warning("embedding_model_preload_failed", error=str(exc))
+    
+    # Schedule pre-load as a background task (doesn't block startup)
+    asyncio.create_task(asyncio.to_thread(_background_preload_embeddings))
+    
     yield
     log.info("api_stopped")
 

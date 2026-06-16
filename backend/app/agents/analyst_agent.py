@@ -130,13 +130,16 @@ def _write_commentary(
     router: LLMRouter, state: AgentState, analysis: FinancialAnalysis
 ) -> list[Claim]:
     payload = {
-        "metrics": [m.model_dump() for m in analysis.metrics],
+        "metrics": [
+            {"id": m.metric_id, "v": m.value, "u": m.unit, "p": m.period}
+            for m in analysis.metrics
+        ],
         "anomalies": analysis.anomalies,
     }
     system = load_prompt("analyst_commentary").format(company=state.company_name)
     try:
         result = router.complete_json(
-            "smart", system, json.dumps(payload), _Commentary, max_tokens=800
+            "fast", system, json.dumps(payload), _Commentary, max_tokens=600
         )
     except ValueError as exc:
         log.warning("analyst_commentary_failed", error=str(exc))

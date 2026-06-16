@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     # ── Embeddings ─────────────────────────────────────────────
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     embedding_device: str = "cpu"
+    hf_hub_offline: bool = False  # set True in .env once model is cached locally
 
     # ── Vector DB ──────────────────────────────────────────────
     qdrant_url: str = "http://localhost:6333"

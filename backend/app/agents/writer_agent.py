@@ -26,16 +26,17 @@ from app.report.schema import (
     RiskEntry,
     ValuationSection,
 )
-from app.state import AgentState, Claim, RetrievedEvidence
+from app.state import AgentState, Claim, MetricValue, RetrievedEvidence
 
 log = get_logger(__name__)
 
 # Token budget constants
-# Writer call budget: 16 chunks×500 chars ≈ 2k input + 400 prompt ≈ 2.5k input.
-# Output capped at 2500 so total ≤ 5k tokens — fits in Groq 70b 6k TPM window
-# with headroom for analyst_commentary + management_questions (same window).
-_MAX_EVIDENCE_CHARS = 500
-_MAX_EVIDENCE_CHUNKS = 12
+# Writer uses the FAST model (8b-instant). Actual Groq on_demand TPM = 6000.
+# Keep total request (input + output) under 5500 tokens to leave headroom.
+# ~8 chunks × 300 chars ≈ 600 tokens input + 800 prompt ≈ 1400 input → 4000 output budget.
+# Targeting input ~1400 + output 2500 = ~3900 total — safely under 6000.
+_MAX_EVIDENCE_CHARS = 300
+_MAX_EVIDENCE_CHUNKS = 8
 _WRITER_MAX_TOKENS = 2500
 _MARKET_CHUNK_PREFIX = "mkt_"
 
@@ -204,34 +205,73 @@ class _Revision(BaseModel):
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def _context_payload(state: AgentState) -> str:
-    metrics = (
-        [m.model_dump() for m in state.analysis.metrics] if state.analysis else []
-    )
+    """Compact structured data payload — strips verbose fields that bloat token count.
+
+    MetricValue objects carry inputs/formula dicts that are only needed for
+    the XBRL table display, not for LLM prose generation.  Market/news/insider
+    details are already embedded in the evidence block so we only send summary
+    scalars here to avoid duplication.  Target: ≤900 tokens total.
+    """
+    # Compact metrics — id, value, unit, period only (drops inputs/formula/name)
+    metrics_compact = [
+        {"id": m.metric_id, "v": m.value, "u": m.unit, "p": m.period}
+        for m in (state.analysis.metrics if state.analysis else [])
+    ]
     anomalies = state.analysis.anomalies if state.analysis else []
+
+    # Compact market — key valuation fields; full detail already in mkt_snapshot chunk
     market: dict[str, Any] = {"available": False}
-    if state.market is not None:
-        market = state.market.model_dump(mode="json")
-    news: dict[str, Any] = {"available": False}
-    if state.news is not None:
-        news = {
-            "available": state.news.available,
-            "items": [
-                {"title": n.title, "sentiment": n.sentiment, "published": str(n.published_at)}
-                for n in state.news.items
-            ],
+    if state.market is not None and state.market.available:
+        mk = state.market
+        market = {
+            "available": True,
+            "price": mk.price,
+            "mktcap_b": round(mk.market_cap / 1e9, 1) if mk.market_cap else None,
+            "pe_ttm": mk.pe_ttm,
+            "fwd_pe": mk.forward_pe,
+            "ev_ebitda": mk.ev_to_ebitda,
+            "p_s": mk.price_to_sales,
+            "p_b": mk.price_to_book,
+            "beta": mk.beta,
+            "target_mean": mk.target_mean,
+            "rec": mk.recommendation,
+            "analysts": mk.num_analysts,
+            "div_yield": mk.dividend_yield,
+            "change_1y_pct": mk.change_1y_pct,
+            "sector": mk.sector,
+            "industry": mk.industry,
         }
+
+    # Compact news — headlines only; full text already in mkt_news chunk
+    news_lines: list[str] = []
+    if state.news is not None and state.news.available:
+        news_lines = [
+            f"[{n.sentiment}] {n.title}"
+            for n in state.news.items[:8]
+        ]
+
+    # Compact insider — summary scalars only; transactions in mkt_insiders chunk
     insider: dict[str, Any] = {"available": False}
-    if state.insider_activity is not None:
-        insider = state.insider_activity.model_dump(mode="json")
+    if state.insider_activity is not None and state.insider_activity.available:
+        ia = state.insider_activity
+        insider = {
+            "available": True,
+            "sentiment": ia.sentiment,
+            "net_shares": ia.net_shares,
+            "net_value_m": round(ia.net_value / 1e6, 1) if ia.net_value else None,
+        }
+
     scorecard: dict[str, Any] = {}
     if state.scorecard and state.scorecard.available:
-        scorecard = state.scorecard.model_dump(mode="json")
+        sc = state.scorecard
+        scorecard = {"score": sc.composite_score, "label": sc.composite_label}
+
     return json.dumps(
         {
-            "METRICS": metrics,
+            "METRICS": metrics_compact,
             "ANOMALIES": anomalies,
             "MARKET": market,
-            "NEWS": news,
+            "NEWS": news_lines,
             "INSIDER": insider,
             "SCORECARD": scorecard,
             "DATA_GAPS": state.data_gaps,
@@ -265,6 +305,208 @@ def _to_claims(
             )
         )
     return claims
+
+
+def _find_metric(metrics: list[MetricValue], metric_id: str) -> MetricValue | None:
+    for metric in metrics:
+        if metric.metric_id == metric_id:
+            return metric
+    return None
+
+
+def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
+    """Fill sparse sections with deterministic, cited claims.
+
+    This keeps reports useful when the writer model returns too few claims for
+    non-financial sections. All added claims cite metric_ids or synthetic
+    market/news chunk_ids so critic verification remains grounded.
+    """
+    metrics = state.analysis.metrics if state.analysis else []
+    market = state.market
+
+    if not report.executive_summary:
+        rev = _find_metric(metrics, "revenue_growth_yoy")
+        fcf = _find_metric(metrics, "fcf")
+        if rev is not None:
+            report.executive_summary.append(
+                Claim(
+                    text=(
+                        f"Revenue growth was {rev.value:.2f}% in {rev.period}, "
+                        "indicating continued top-line expansion."
+                    ),
+                    metric_ids=[rev.metric_id],
+                    section="executive_summary",
+                )
+            )
+        if fcf is not None:
+            report.executive_summary.append(
+                Claim(
+                    text=(
+                        f"Free cash flow was {fcf.value:,.0f} {fcf.unit} in {fcf.period}, "
+                        "supporting financial flexibility."
+                    ),
+                    metric_ids=[fcf.metric_id],
+                    section="executive_summary",
+                )
+            )
+    if not report.business_overview:
+        revenue = _find_metric(metrics, "revenue")
+        gross_margin = _find_metric(metrics, "gross_margin_fy2025")
+        if revenue is not None:
+            report.business_overview.append(
+                Claim(
+                    text=(
+                        f"Annual revenue was {revenue.value:,.0f} {revenue.unit} in {revenue.period}, "
+                        "indicating the current operating scale of the business."
+                    ),
+                    metric_ids=[revenue.metric_id],
+                    section="business_overview",
+                )
+            )
+        if gross_margin is not None:
+            report.business_overview.append(
+                Claim(
+                    text=(
+                        f"Gross margin was {gross_margin.value:.2f}% in {gross_margin.period}, "
+                        "reflecting product mix and pricing power."
+                    ),
+                    metric_ids=[gross_margin.metric_id],
+                    section="business_overview",
+                )
+            )
+
+    if not report.recent_developments:
+        net_margin_trend = _find_metric(metrics, "net_margin_trend_bps")
+        share_dilution = _find_metric(metrics, "share_dilution_rate")
+        if net_margin_trend is not None:
+            report.recent_developments.append(
+                Claim(
+                    text=(
+                        f"Net margin changed by {net_margin_trend.value:.1f} bps in {net_margin_trend.period}, "
+                        "showing a recent shift in profitability."
+                    ),
+                    metric_ids=[net_margin_trend.metric_id],
+                    section="recent_developments",
+                )
+            )
+        if share_dilution is not None:
+            report.recent_developments.append(
+                Claim(
+                    text=(
+                        f"Share dilution rate was {share_dilution.value:.2f}% over {share_dilution.period}."
+                    ),
+                    metric_ids=[share_dilution.metric_id],
+                    section="recent_developments",
+                )
+            )
+
+    if not report.risk_matrix:
+        risks: list[RiskEntry] = []
+        current_ratio = _find_metric(metrics, "current_ratio")
+        debt_ratio = _find_metric(metrics, "debt_to_ebitda")
+        rev_growth = _find_metric(metrics, "revenue_growth_yoy")
+
+        if current_ratio is not None and current_ratio.value < 1.0:
+            risks.append(
+                RiskEntry(
+                    title="Liquidity Cushion",
+                    severity="medium",
+                    likelihood="medium",
+                    claims=[
+                        Claim(
+                            text=(
+                                f"Current ratio is {current_ratio.value:.2f}x in {current_ratio.period}, "
+                                "which is below 1.0x and may limit short-term liquidity flexibility."
+                            ),
+                            metric_ids=[current_ratio.metric_id],
+                            section="risk_matrix",
+                        )
+                    ],
+                )
+            )
+
+        if debt_ratio is not None and debt_ratio.value >= 2.0:
+            risks.append(
+                RiskEntry(
+                    title="Leverage Pressure",
+                    severity="medium",
+                    likelihood="low",
+                    claims=[
+                        Claim(
+                            text=(
+                                f"Debt to EBITDA is {debt_ratio.value:.2f}x in {debt_ratio.period}, "
+                                "which can increase financing and refinancing risk."
+                            ),
+                            metric_ids=[debt_ratio.metric_id],
+                            section="risk_matrix",
+                        )
+                    ],
+                )
+            )
+
+        if rev_growth is not None and rev_growth.value < 3.0:
+            risks.append(
+                RiskEntry(
+                    title="Low Growth Momentum",
+                    severity="medium",
+                    likelihood="medium",
+                    claims=[
+                        Claim(
+                            text=(
+                                f"Revenue growth was {rev_growth.value:.2f}% in {rev_growth.period}, "
+                                "which indicates modest top-line momentum."
+                            ),
+                            metric_ids=[rev_growth.metric_id],
+                            section="risk_matrix",
+                        )
+                    ],
+                )
+            )
+
+        if market and market.available and market.beta is not None and market.beta > 1.2:
+            if rev_growth is not None:
+                risks.append(
+                    RiskEntry(
+                        title="Growth Sensitivity",
+                        severity="low",
+                        likelihood="medium",
+                        claims=[
+                            Claim(
+                                text=(
+                                    "Higher trading volatility can amplify downside during periods of slower growth."
+                                ),
+                                metric_ids=[rev_growth.metric_id],
+                                section="risk_matrix",
+                            )
+                        ],
+                    )
+                )
+
+        report.risk_matrix = risks[:3]
+
+    if not report.red_flags:
+        current_ratio = _find_metric(metrics, "current_ratio")
+        accruals = _find_metric(metrics, "accruals_ratio")
+        if current_ratio is not None and current_ratio.value < 1.0:
+            report.red_flags.append(
+                Claim(
+                    text=(
+                        f"Current ratio is {current_ratio.value:.2f}x in {current_ratio.period}, below 1.0x."
+                    ),
+                    metric_ids=[current_ratio.metric_id],
+                    section="red_flags",
+                )
+            )
+        if accruals is not None and accruals.value >= 8.0:
+            report.red_flags.append(
+                Claim(
+                    text=(
+                        f"Accruals ratio is {accruals.value:.2f}% in {accruals.period}, which may indicate lower earnings quality."
+                    ),
+                    metric_ids=[accruals.metric_id],
+                    section="red_flags",
+                )
+            )
 
 
 def _build_earnings_quality(state: AgentState) -> EarningsQualitySection:
@@ -362,7 +604,7 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
         f"STRUCTURED DATA:\n{_context_payload(state)}"
     )
     output = router.complete_json(
-        "writer", system, user, _WriterOutput, max_tokens=_WRITER_MAX_TOKENS
+        "fast", system, user, _WriterOutput, max_tokens=_WRITER_MAX_TOKENS
     )
 
     valid_metric_ids = (
@@ -464,7 +706,7 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
         )
         try:
             revision = router.complete_json(
-                "writer", load_prompt("writer_revision"), user, _Revision, max_tokens=500
+                "fast", load_prompt("writer_revision"), user, _Revision, max_tokens=500
             )
         except ValueError as exc:
             log.warning("revision_failed_dropping_claim", claim_id=claim.claim_id,
@@ -778,7 +1020,7 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
         f"STRUCTURED DATA:\n{_context_payload(state)}"
     )
     output = router.complete_json(
-        "writer", system, user, _WriterOutput, max_tokens=_WRITER_MAX_TOKENS
+        "fast", system, user, _WriterOutput, max_tokens=_WRITER_MAX_TOKENS
     )
 
     valid_metric_ids = (
@@ -790,7 +1032,7 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
     if state.analysis and state.analysis.commentary:
         commentary.extend(state.analysis.commentary)
 
-    return DDReport(
+    report = DDReport(
         company=CompanyMeta(name=state.company_name, ticker=state.ticker, cik=state.cik),
         executive_summary=_to_claims(output.executive_summary, "executive_summary",
                                      valid_metric_ids, valid_chunk_ids),
@@ -815,12 +1057,16 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
         data_gaps=list(state.data_gaps),
         metadata=ReportMetadata(run_id=state.run_id),
     )
+    _backfill_missing_sections(report, state)
+    return report
 
 
 def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
     assert state.report is not None
     report = state.report
     evidence_by_id = {e.chunk_id: e for e in state.evidence}
+    for chunk in _synthetic_market_evidence(state):
+        evidence_by_id[chunk.chunk_id] = chunk
     rejected = [c for c in report.all_claims() if c.verification_status == "unsupported"]
     feedback_by_claim = {v.claim_id: v.feedback for v in state.critic_verdicts}
 

@@ -24,6 +24,81 @@ _SCALES = (1.0, 1e3, 1e6, 1e9, 1e12, 1e-2)
 _REL_TOLERANCE = 0.005  # 0.5% — covers rounding to fewer decimals
 
 
+def _synthetic_market_evidence(state: AgentState) -> list[RetrievedEvidence]:
+    """Mirror writer synthetic chunks so critic can verify those citations."""
+    chunks: list[RetrievedEvidence] = []
+    if state.market and state.market.available:
+        m = state.market
+        lines = [f"Market data for {m.ticker} (source: Yahoo Finance):"]
+        if m.price:
+            lines.append(f"  Price: ${m.price:,.2f}")
+        if m.change_1y_pct is not None:
+            lines.append(f"  1-year price change: {m.change_1y_pct:+.2f}%")
+        if m.market_cap:
+            lines.append(f"  Market cap: ${m.market_cap/1e9:,.1f}B")
+        if m.pe_ttm:
+            lines.append(f"  Trailing P/E: {m.pe_ttm:.1f}x")
+        if m.forward_pe:
+            lines.append(f"  Forward P/E: {m.forward_pe:.1f}x")
+        if m.ev_to_ebitda:
+            lines.append(f"  EV/EBITDA: {m.ev_to_ebitda:.1f}x")
+        if m.beta:
+            lines.append(f"  Beta: {m.beta:.2f}")
+        if m.sector:
+            lines.append(f"  Sector: {m.sector}")
+        if m.industry:
+            lines.append(f"  Industry: {m.industry}")
+        if m.summary:
+            lines.append(f"  Market summary: {m.summary}")
+        chunks.append(
+            RetrievedEvidence(
+                chunk_id=f"{_MARKET_CHUNK_PREFIX}snapshot",
+                text="\n".join(lines),
+                source_url=f"https://finance.yahoo.com/quote/{m.ticker}",
+                form_type="market",
+                fiscal_period="current",
+                section="Market Snapshot",
+                score=0.9,
+            )
+        )
+
+    if state.news and state.news.available and state.news.items:
+        news_lines = ["Recent news headlines (source: Google News RSS):"]
+        for item in state.news.items[:12]:
+            news_lines.append(f"  [{item.sentiment.upper()}] {item.title}")
+        chunks.append(
+            RetrievedEvidence(
+                chunk_id=f"{_MARKET_CHUNK_PREFIX}news",
+                text="\n".join(news_lines),
+                source_url="https://news.google.com",
+                form_type="news",
+                fiscal_period="current",
+                section="Recent News",
+                score=0.8,
+            )
+        )
+
+    if state.insider_activity and state.insider_activity.available:
+        ia = state.insider_activity
+        insider_lines = [
+            f"Insider activity for {state.ticker}:",
+            f"  Net sentiment: {ia.sentiment.upper()}",
+            f"  Net shares: {ia.net_shares:,.0f}",
+        ]
+        chunks.append(
+            RetrievedEvidence(
+                chunk_id=f"{_MARKET_CHUNK_PREFIX}insiders",
+                text="\n".join(insider_lines),
+                source_url=f"https://finance.yahoo.com/quote/{state.ticker}/insider-transactions",
+                form_type="insider",
+                fiscal_period="trailing12m",
+                section="Insider Activity",
+                score=0.85,
+            )
+        )
+    return chunks
+
+
 def _numbers_in(text: str) -> list[float]:
     values: list[float] = []
     for raw in _NUMBER_RE.findall(text):
@@ -142,6 +217,8 @@ def critic_node(state: AgentState) -> dict[str, Any]:
         return {"critic_verdicts": [], "status": "critic_skipped"}
 
     evidence_by_id = {e.chunk_id: e for e in state.evidence}
+    for chunk in _synthetic_market_evidence(state):
+        evidence_by_id[chunk.chunk_id] = chunk
     metrics = state.analysis.metrics if state.analysis else []
 
     verdicts: list[CriticVerdict] = []

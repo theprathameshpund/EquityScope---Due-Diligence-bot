@@ -30,7 +30,9 @@ export class App implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private closeStream: (() => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private statusPoller: ReturnType<typeof setInterval> | null = null;
   private startedAt = 0;
+  private statusErrorCount = 0;
 
   readonly focusSuggestions = FOCUS_SUGGESTIONS;
 
@@ -74,6 +76,7 @@ export class App implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.closeStream?.();
     this.stopTimer();
+    this.stopStatusPolling();
   }
 
   toggleTheme(): void {
@@ -110,6 +113,8 @@ export class App implements OnInit, OnDestroy {
       return;
     }
     this.formError.set('');
+    this.closeStream?.();
+    this.stopStatusPolling();
     this.current.set(null);
     this.timeline.set([]);
     this.tokens.set(0);
@@ -133,6 +138,8 @@ export class App implements OnInit, OnDestroy {
 
   openRun(runId: string): void {
     this.closeStream?.();
+    this.stopStatusPolling();
+    this.formError.set('');
     this.currentRunId.set(runId);
     this.timeline.set([]);
     this.current.set(null);
@@ -140,14 +147,17 @@ export class App implements OnInit, OnDestroy {
     this.api.getReport(runId).subscribe({
       next: (status) => {
         this.reportLoading.set(false);
+        this.current.set(status);
+        if (status.error && (status.status === 'running' || status.status === 'queued')) {
+          this.handleRunTrackingError(status);
+          return;
+        }
         if (status.status === 'running' || status.status === 'queued') {
           this.running.set(true);
           this.startTimer();
           this.attachStream(runId);
         } else {
-          this.running.set(false);
-          this.stopTimer();
-          this.current.set(status);
+          this.completeRun(status);
         }
       },
       error: () => this.reportLoading.set(false),
@@ -171,6 +181,19 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  private startStatusPolling(runId: string): void {
+    this.stopStatusPolling();
+    this.statusErrorCount = 0;
+    this.statusPoller = setInterval(() => this.refreshRunStatus(runId), 5000);
+  }
+
+  private stopStatusPolling(): void {
+    if (this.statusPoller) {
+      clearInterval(this.statusPoller);
+      this.statusPoller = null;
+    }
+  }
+
   elapsedLabel(): string {
     const total = this.elapsed();
     const minutes = Math.floor(total / 60);
@@ -180,6 +203,7 @@ export class App implements OnInit, OnDestroy {
 
   private attachStream(runId: string): void {
     this.closeStream?.();
+    this.startStatusPolling(runId);
     this.closeStream = this.api.streamEvents(
       runId,
       (event) => this.applyEvent(event),
@@ -198,13 +222,57 @@ export class App implements OnInit, OnDestroy {
   }
 
   private finishRun(runId: string): void {
-    this.running.set(false);
-    this.stopTimer();
+    this.refreshRunStatus(runId);
+  }
+
+  private refreshRunStatus(runId: string): void {
     this.api.getReport(runId).subscribe({
       next: (status) => {
+        this.statusErrorCount = 0;
         this.current.set(status);
+        if (status.error && (status.status === 'running' || status.status === 'queued')) {
+          this.handleRunTrackingError(status);
+          return;
+        }
+        if (status.status === 'running' || status.status === 'queued') {
+          return;
+        }
+        this.completeRun(status);
+      },
+      error: () => {
+        this.statusErrorCount += 1;
+        if (this.statusErrorCount < 3) {
+          return;
+        }
+        this.closeStream?.();
+        this.closeStream = null;
+        this.running.set(false);
+        this.stopTimer();
+        this.stopStatusPolling();
+        this.formError.set('Lost connection to the API while the run was in progress. Check the backend and reopen the run.');
         this.refreshRuns();
       },
     });
+  }
+
+  private completeRun(status: ReportStatus): void {
+    this.closeStream?.();
+    this.closeStream = null;
+    this.running.set(false);
+    this.stopTimer();
+    this.stopStatusPolling();
+    this.current.set(status);
+    this.refreshRuns();
+  }
+
+  private handleRunTrackingError(status: ReportStatus): void {
+    this.closeStream?.();
+    this.closeStream = null;
+    this.running.set(false);
+    this.stopTimer();
+    this.stopStatusPolling();
+    this.current.set(status);
+    this.formError.set(status.error ?? 'Run tracking is unavailable right now.');
+    this.refreshRuns();
   }
 }

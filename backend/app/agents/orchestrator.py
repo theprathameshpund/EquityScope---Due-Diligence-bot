@@ -14,9 +14,10 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from collections import deque
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -46,11 +47,14 @@ RUN_TTL_S = 7 * 24 * 3600
 
 REPORTS_DIR = Path("data/reports")
 
+_memory_lock = Lock()
+_memory_run_status: dict[str, dict[str, Any]] = {}
+_memory_event_logs: dict[str, deque[str]] = {}
+
 
 # ── Redis progress events (graceful when Redis is down) ───────
 
 
-@lru_cache(maxsize=1)
 def _redis() -> Any | None:
     try:
         import redis
@@ -76,11 +80,14 @@ def publish_event(run_id: str, node: str, status: EventStatus, message: str = ""
         tokens_used=tracker.tokens_used,
         cost_usd=round(tracker.cost_usd, 6),
     )
+    payload = event.model_dump_json()
+    with _memory_lock:
+        _memory_event_logs.setdefault(run_id, deque(maxlen=500)).append(payload)
+
     client = _redis()
     if client is None:
         return
     try:
-        payload = event.model_dump_json()
         client.publish(EVENTS_CHANNEL.format(run_id=run_id), payload)
         key = EVENTS_LIST.format(run_id=run_id)
         client.rpush(key, payload)
@@ -98,9 +105,6 @@ def store_run_status(
     error: str | None = None,
     evidence: list[RetrievedEvidence] | None = None,
 ) -> None:
-    client = _redis()
-    if client is None:
-        return
     payload: dict[str, Any] = {
         "run_id": run_id,
         "status": status,
@@ -115,10 +119,34 @@ def store_run_status(
         payload["evidence"] = [e.model_dump(mode="json") for e in evidence]
     if error:
         payload["error"] = error
+
+    with _memory_lock:
+        _memory_run_status[run_id] = payload
+
+    client = _redis()
+    if client is None:
+        return
     try:
         client.set(RUN_KEY.format(run_id=run_id), json.dumps(payload), ex=RUN_TTL_S)
     except Exception as exc:
         log.warning("run_status_store_failed", error=str(exc))
+
+
+def get_memory_run_status(run_id: str) -> dict[str, Any] | None:
+    with _memory_lock:
+        payload = _memory_run_status.get(run_id)
+        return dict(payload) if payload is not None else None
+
+
+def list_memory_run_statuses() -> list[dict[str, Any]]:
+    with _memory_lock:
+        return [dict(payload) for payload in _memory_run_status.values()]
+
+
+def get_memory_event_log(run_id: str, start: int = 0) -> list[str]:
+    with _memory_lock:
+        rows = list(_memory_event_logs.get(run_id, deque()))
+    return rows[start:]
 
 
 # ── Nodes ──────────────────────────────────────────────────────
@@ -126,7 +154,13 @@ def store_run_status(
 
 def ingest_check_node(state: AgentState) -> dict[str, Any]:
     """Resolve the company and make sure its filings are indexed."""
-    identity, n_chunks = ingest_company(state.company_input)
+    publish_event(state.run_id, "ingest_check", "start", "Resolving company and checking index…")
+    identity, n_chunks = ingest_company(state.company_input, run_id=state.run_id)
+    if n_chunks > 0:
+        publish_event(
+            state.run_id, "ingest_check", "end",
+            f"Indexed {n_chunks} new chunks for {identity.ticker}"
+        )
     log.info("ingest_check_done", ticker=identity.ticker, new_chunks=n_chunks)
     return {
         "ticker": identity.ticker,

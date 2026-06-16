@@ -60,7 +60,14 @@ class RateLimitPacer:
                     self._events.popleft()
                 requests_ok = self.rpm <= 0 or len(self._events) < self.rpm
                 tokens_in_window = sum(tokens for _, tokens in self._events)
-                tokens_ok = self.tpm <= 0 or tokens_in_window + estimated_tokens <= self.tpm
+                # If the window is empty and a single call exceeds TPM, allow it
+                # through anyway — we can't split one LLM request across windows.
+                window_empty = len(self._events) == 0
+                tokens_ok = (
+                    self.tpm <= 0
+                    or window_empty
+                    or tokens_in_window + estimated_tokens <= self.tpm
+                )
                 if requests_ok and tokens_ok:
                     self._events.append((now, estimated_tokens))
                     return
@@ -395,7 +402,19 @@ class LLMRouter:
                 temperature=temperature,
             )
             try:
-                return schema.model_validate_json(_extract_json(response.text))
+                payload = _extract_json(response.text)
+                try:
+                    return schema.model_validate_json(payload)
+                except ValidationError:
+                    # Some providers occasionally wrap the schema object as
+                    # {"<SchemaName>": {...}}; unwrap it to avoid retries.
+                    parsed = json.loads(payload)
+                    if isinstance(parsed, dict):
+                        for key in (schema.__name__, schema.__name__.lstrip("_")):
+                            nested = parsed.get(key)
+                            if isinstance(nested, dict):
+                                return schema.model_validate(nested)
+                    raise
             except (ValidationError, json.JSONDecodeError) as exc:
                 last_error = str(exc)[:800]
                 log.warning("structured_output_invalid", attempt=attempt, error=last_error[:200])
