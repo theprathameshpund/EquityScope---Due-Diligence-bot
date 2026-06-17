@@ -208,6 +208,38 @@ From verification run `run_12ba9ded23c5` (AAPL, focus "competition risk",
 3 claims the critic could not verify after 2 revision loops were dropped and
 disclosed in the report's `data_gaps` — exactly the intended behavior.
 
+## Agents used
+
+The backend uses a small set of specialized agents orchestrated by
+`src/agents/orchestrator.py`. Each agent is a separate LangGraph node that
+operates on typed `AgentState` rather than free-form text.
+
+- `orchestrator.py` — supervisor and graph wiring. Builds the LangGraph run
+  topology, routes work to each node, publishes progress to Redis, enforces
+  token budget, and finalizes report persistence.
+- `filings_agent.py` — filings retrieval and agentic RAG. Generates retrieval
+  queries, rewrites them, retrieves relevant filing chunks from Qdrant, ranks
+  them, grades relevance, and retries once when needed.
+- `market_agent.py` — market snapshot + peer valuation context. Fetches
+  yfinance data, optionally enriches it with FRED macro figures, and produces
+  market commentary that degrades gracefully if data is unavailable.
+- `news_agent.py` — news sentiment and context. Pulls RSS feeds, applies prompt
+  injection filtering, batches sources, and summarizes sentiment/top themes.
+- `analyst_agent.py` — deterministic financial analysis. Computes metrics from
+  EDGAR XBRL in `src/tools/metrics.py`, creates claims for key finance and
+  risk dimensions, and ensures the LLM never performs arithmetic.
+- `writer_agent.py` — structured report composition. Writes the `DDReport`
+  JSON schema, assembles company narrative, injects citations, and performs
+  revision passes when the writer provider is available.
+- `critic_agent.py` — verification and numeric checks. Runs local NLI entailment
+  against cited evidence chunks and applies regex checks against the computed
+  metrics; unverifiable claims can be revised or dropped.
+
+For the full workspace overview and Docker/quick-start instructions, see the
+main project README:
+
+- [Project README](../README.md)
+
 ## Screenshots
 
 _Placeholder: add `docs/screenshot_timeline.png` (live agent timeline) and

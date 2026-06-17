@@ -38,7 +38,7 @@ frontend-angular/.angular/
 
 
 # backend
-filings/
+data/filings/
 qdrant/
 reports/
 
