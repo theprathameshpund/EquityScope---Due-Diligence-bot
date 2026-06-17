@@ -393,14 +393,32 @@ class LLMRouter:
                 f"{user}\n\nYour previous response was invalid: {last_error}\n"
                 "Return corrected JSON only."
             )
-            response = self.complete(
-                tier,
-                system_full,
-                prompt,
-                json_mode=True,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            try:
+                response = self.complete(
+                    tier,
+                    system_full,
+                    prompt,
+                    json_mode=True,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except Exception as exc:
+                # If provider rejects the request due to size (413 Payload Too Large),
+                # try again with a reduced prompt: omit the full JSON Schema and ask
+                # for JSON matching the schema (safer for large schemas).
+                msg = str(exc)
+                log.info("llm_call_failed", attempt=attempt, error=msg[:200])
+                if "413" in msg or "Payload Too Large" in msg:
+                    log.warning("llm_payload_too_large", attempt=attempt)
+                    # first fallback: reduce tokens and remove schema from system prompt
+                    max_tokens = max(128, max_tokens // 2)
+                    system_full = (
+                        f"{system}\n\nRespond ONLY with a JSON object matching the required schema (no markdown fences, no commentary)."
+                    )
+                    # try next attempt
+                    last_error = "413 Payload Too Large"
+                    continue
+                raise
             try:
                 payload = _extract_json(response.text)
                 try:
@@ -424,10 +442,45 @@ class LLMRouter:
 def _extract_json(text: str) -> str:
     """Strip markdown fences / pre-amble around a JSON object."""
     stripped = text.strip()
+    # Fast path: starts with a JSON object
     if stripped.startswith("{"):
+        # Find the first balanced JSON object to avoid greedy regex issues
+        depth = 0
+        start = None
+        for i, ch in enumerate(stripped):
+            if ch == "{" and start is None:
+                start = i
+                depth = 1
+                continue
+            if start is not None:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return stripped[start : i + 1]
+        # Fallback to full stripped text if we couldn't balance braces
         return stripped
-    match = re.search(r"\{.*\}", stripped, re.DOTALL)
-    return match.group(0) if match else stripped
+    # Otherwise try to find first `{` and extract balanced object
+    first = stripped.find("{")
+    if first == -1:
+        return stripped
+    depth = 0
+    start = None
+    for i in range(first, len(stripped)):
+        ch = stripped[i]
+        if ch == "{" and start is None:
+            start = i
+            depth = 1
+            continue
+        if start is not None:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return stripped[start : i + 1]
+    return stripped
 
 
 def _approx_tokens(text: str) -> int:

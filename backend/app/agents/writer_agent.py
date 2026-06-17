@@ -16,12 +16,17 @@ from app.llm.router import LLMRouter, load_prompt
 from app.logging_setup import get_logger
 from app.report.schema import (
     CompanyMeta,
+    DCFAnalysisSection,
     DDReport,
     EarningsQualitySection,
     FinancialHealthSection,
     InsiderActivitySection,
+    InstitutionalExecutiveSummary,
     InvestmentScorecardSection,
+    InvestmentThesisSection,
     MetricsTable,
+    QualitativeAnalysisSection,
+    ReportQualityChecks,
     ReportMetadata,
     RiskEntry,
     ValuationSection,
@@ -314,6 +319,13 @@ def _find_metric(metrics: list[MetricValue], metric_id: str) -> MetricValue | No
     return None
 
 
+def _find_latest_metric_with_prefix(
+    metrics: list[MetricValue], metric_prefix: str
+) -> MetricValue | None:
+    matches = [metric for metric in metrics if metric.metric_id.startswith(metric_prefix)]
+    return matches[-1] if matches else None
+
+
 def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
     """Fill sparse sections with deterministic, cited claims.
 
@@ -351,7 +363,7 @@ def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
             )
     if not report.business_overview:
         revenue = _find_metric(metrics, "revenue")
-        gross_margin = _find_metric(metrics, "gross_margin_fy2025")
+        gross_margin = _find_latest_metric_with_prefix(metrics, "gross_margin_fy")
         if revenue is not None:
             report.business_overview.append(
                 Claim(
@@ -377,7 +389,7 @@ def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
 
     if not report.recent_developments:
         net_margin_trend = _find_metric(metrics, "net_margin_trend_bps")
-        share_dilution = _find_metric(metrics, "share_dilution_rate")
+        share_dilution = _find_metric(metrics, "share_dilution")
         if net_margin_trend is not None:
             report.recent_developments.append(
                 Claim(
@@ -589,6 +601,261 @@ def _build_scorecard_section(state: AgentState) -> InvestmentScorecardSection:
     )
 
 
+def _metric_value(state: AgentState, metric_id: str) -> float | None:
+    if state.analysis is None:
+        return None
+    metric = state.analysis.metric_by_id(metric_id)
+    return metric.value if metric else None
+
+
+def _overall_score_100(state: AgentState, report: DDReport | None = None) -> int:
+    if state.scorecard and state.scorecard.available:
+        base = state.scorecard.composite_score / 5.0 * 100
+    else:
+        base = 50.0
+    risk_penalty = 0.0
+    if report is not None:
+        risk_penalty += 8.0 * sum(1 for risk in report.risk_matrix if risk.severity == "high")
+        risk_penalty += 4.0 * len(report.red_flags)
+    return max(0, min(100, round(base - risk_penalty)))
+
+
+def _rating_from_score(score: int) -> str:
+    if score >= 82:
+        return "Strong Buy"
+    if score >= 65:
+        return "Buy"
+    if score >= 45:
+        return "Hold"
+    if score >= 25:
+        return "Sell"
+    return "Strong Sell"
+
+
+def _expected_return_range(state: AgentState) -> str:
+    market = state.market
+    if market and market.available and market.price and market.target_low and market.target_high:
+        low = (market.target_low / market.price - 1.0) * 100.0
+        high = (market.target_high / market.price - 1.0) * 100.0
+        return f"{low:+.0f}% to {high:+.0f}% based on Yahoo Finance analyst target range."
+    return "Data unavailable or unverifiable."
+
+
+def _build_institutional_summary(state: AgentState, report: DDReport) -> InstitutionalExecutiveSummary:
+    score = _overall_score_100(state, report)
+    market = state.market
+    confidence = 35
+    confidence += 20 if state.analysis and state.analysis.metrics else 0
+    confidence += 15 if state.evidence else 0
+    confidence += 10 if market and market.available else 0
+    confidence += 10 if state.news and state.news.available and state.news.items else 0
+    confidence += 10 if state.insider_activity and state.insider_activity.available else 0
+    confidence = min(confidence, 100)
+
+    bull: list[str] = []
+    bear: list[str] = []
+    catalysts: list[str] = []
+    risks: list[str] = []
+
+    rev_growth = _metric_value(state, "revenue_growth_yoy")
+    fcf_margin = _metric_value(state, "fcf_margin")
+    roic = _metric_value(state, "roic")
+    debt = _metric_value(state, "debt_to_ebitda")
+    current = _metric_value(state, "current_ratio")
+
+    if rev_growth is not None:
+        (bull if rev_growth > 0 else bear).append(f"Revenue growth was {rev_growth:.2f}% in the latest fiscal year.")
+    if fcf_margin is not None:
+        (bull if fcf_margin > 5 else bear).append(f"Free-cash-flow margin was {fcf_margin:.2f}%.")
+    if roic is not None:
+        (bull if roic > 10 else bear).append(f"ROIC was {roic:.2f}%.")
+    if debt is not None:
+        (bull if debt <= 2.5 else bear).append(f"Debt/EBITDA was {debt:.2f}x.")
+    if current is not None:
+        (bull if current >= 1.0 else bear).append(f"Current ratio was {current:.2f}x.")
+
+    for risk in report.risk_matrix[:3]:
+        risks.append(risk.title)
+    if market and market.available:
+        if market.target_mean and market.price:
+            catalysts.append("Analyst target revisions and estimate changes.")
+        if market.change_1y_pct is not None:
+            catalysts.append("Sustained share-price momentum or reversal versus the last 12 months.")
+    if state.news and state.news.items:
+        catalysts.append("Recent company-specific news flow from Google News RSS.")
+
+    while len(bull) < 5:
+        bull.append("Data unavailable or unverifiable.")
+    while len(bear) < 5:
+        bear.append("Data unavailable or unverifiable.")
+    while len(catalysts) < 3:
+        catalysts.append("Data unavailable or unverifiable.")
+    while len(risks) < 3:
+        risks.append("Data unavailable or unverifiable.")
+
+    return InstitutionalExecutiveSummary(
+        investment_rating=_rating_from_score(score),
+        confidence_score=confidence,
+        investment_horizon="3 Year",
+        key_bull_thesis=bull[:5],
+        key_bear_thesis=bear[:5],
+        top_catalysts=catalysts[:3],
+        top_risks=risks[:3],
+        expected_return_range=_expected_return_range(state),
+    )
+
+
+def _score10(value: float | None, neutral: float = 5.0) -> float:
+    return round(max(0.0, min(10.0, value if value is not None else neutral)), 1)
+
+
+def _build_business_quality(state: AgentState) -> QualitativeAnalysisSection:
+    growth = _metric_value(state, "revenue_cagr_3y") or _metric_value(state, "revenue_growth_yoy")
+    margin = _metric_value(state, "gross_margin_trend_bps")
+    score = 5.0
+    if growth is not None:
+        score += 2 if growth > 10 else 1 if growth > 0 else -1
+    if margin is not None:
+        score += 1 if margin > 0 else -1 if margin < -300 else 0
+    summary = []
+    if state.market and state.market.available:
+        summary.append(f"Industry classification from Yahoo Finance: {state.market.sector or 'Data unavailable or unverifiable.'} / {state.market.industry or 'Data unavailable or unverifiable.'}.")
+    if growth is not None:
+        summary.append(f"Growth evidence: revenue growth metric is {growth:.2f}%.")
+    unavailable = [
+        "Segment revenue breakdown.",
+        "Geographic revenue breakdown.",
+        "Customer concentration.",
+        "Supplier concentration.",
+        "Market share trends.",
+        "Patents and technology-leadership proof.",
+    ]
+    return QualitativeAnalysisSection(score=_score10(score), summary=summary, data_unavailable=unavailable)
+
+
+def _build_management_analysis(state: AgentState) -> QualitativeAnalysisSection:
+    score = 5.0
+    dilution = _metric_value(state, "share_dilution")
+    if dilution is not None:
+        score += 1 if dilution <= 0 else -1 if dilution > 5 else 0
+    if state.insider_activity and state.insider_activity.available:
+        score += 1 if state.insider_activity.sentiment == "bullish" else 0
+    summary: list[str] = []
+    for officer in (state.market.officers if state.market else [])[:5]:
+        name = officer.get("name") or "Data unavailable or unverifiable."
+        title = officer.get("title") or "Data unavailable or unverifiable."
+        summary.append(f"{name}: {title}.")
+    if dilution is not None:
+        summary.append(f"Share-count change was {dilution:.2f}% over the measured period.")
+    unavailable = [
+        "Board independence and committee detail.",
+        "Compensation alignment.",
+        "Acquisition execution history.",
+        "Management credibility beyond source-backed officer and capital-allocation data.",
+    ]
+    return QualitativeAnalysisSection(score=_score10(score), summary=summary, data_unavailable=unavailable)
+
+
+def _build_segment_analysis() -> QualitativeAnalysisSection:
+    return QualitativeAnalysisSection(
+        score=None,
+        data_unavailable=[
+            "Segment revenue, segment growth, segment profitability, market share, and valuation contribution require source-specific segment tables or investor materials not reliably parsed in this run."
+        ],
+    )
+
+
+def _build_industry_analysis(state: AgentState) -> QualitativeAnalysisSection:
+    summary = []
+    if state.market and state.market.available:
+        summary.append(f"Industry source: Yahoo Finance classifies the company in {state.market.industry or 'Data unavailable or unverifiable.'}.")
+    if state.market and state.market.macro_notes:
+        summary.extend(state.market.macro_notes)
+    return QualitativeAnalysisSection(
+        score=None,
+        summary=summary,
+        data_unavailable=[
+            "TAM/SAM/SOM.",
+            "Porter's Five Forces with source-backed market shares.",
+            "Industry growth forecasts.",
+            "Detailed regulatory and disruption landscape.",
+        ],
+    )
+
+
+def _build_dcf_analysis(state: AgentState) -> DCFAnalysisSection:
+    dcf = DCFAnalysisSection()
+    if state.market and state.market.available and state.market.price and state.market.target_mean:
+        expected = (state.market.target_mean / state.market.price - 1.0) * 100.0
+        dcf.base_case.expected_return_pct = round(expected, 1)
+        dcf.base_case.assumptions = ["Yahoo Finance mean analyst price target used as a market-implied reference, not a full DCF."]
+        dcf.base_case.status = "Proxy valuation reference available; full DCF assumptions unavailable or unverifiable."
+        dcf.margin_of_safety = f"{expected:+.1f}% versus current price using Yahoo Finance mean target."
+    return dcf
+
+
+def _enrich_risk_matrix(report: DDReport) -> None:
+    metric_map = {
+        "competition": ["Gross margin trend", "Revenue growth", "Market share disclosures"],
+        "liquidity": ["Current ratio", "Operating cash flow", "Debt maturity disclosures"],
+        "leverage": ["Debt/EBITDA", "Interest coverage when available", "Free cash flow"],
+        "growth": ["Revenue growth", "FCF margin", "Analyst estimate revisions"],
+        "valuation": ["Forward P/E", "EV/EBITDA", "Analyst target range"],
+        "supply": ["Supplier concentration disclosures", "Inventory growth", "Gross margin trend"],
+        "cyber": ["SEC cyber disclosures", "Incident disclosures", "Technology risk factors"],
+    }
+    for risk in report.risk_matrix:
+        key = risk.title.lower()
+        matched = next((metrics for needle, metrics in metric_map.items() if needle in key), None)
+        risk.monitoring_metrics = risk.monitoring_metrics or matched or [
+            "Latest SEC risk-factor updates",
+            "Quarterly revenue and margin trend",
+            "Management guidance changes",
+        ]
+        if risk.mitigation == "Data unavailable or unverifiable.":
+            risk.mitigation = (
+                "Monitor the listed metrics and require updated source evidence before changing the thesis."
+            )
+
+
+def _build_investment_thesis(state: AgentState, report: DDReport) -> InvestmentThesisSection:
+    monitoring = [
+        "Revenue growth",
+        "Gross, operating, and net margin trend",
+        "Free cash flow margin",
+        "Debt/EBITDA and current ratio",
+        "Analyst target and recommendation changes",
+    ]
+    return InvestmentThesisSection(
+        bull_case=report.institutional_summary.key_bull_thesis,
+        base_case=report.executive_summary[:3] and [c.text for c in report.executive_summary[:3]] or ["Data unavailable or unverifiable."],
+        bear_case=report.institutional_summary.key_bear_thesis,
+        probability_weighted_outcome=f"{report.institutional_summary.investment_rating} with {report.institutional_summary.confidence_score}/100 confidence.",
+        monitoring_metrics=monitoring,
+        upgrade_triggers=["Improving revenue growth and margin expansion.", "Lower leverage/liquidity risk.", "Positive revisions to analyst targets or guidance."],
+        downgrade_triggers=["Margin compression.", "Deteriorating cash conversion.", "New high-severity risks or red flags."],
+        exit_triggers=["Unverifiable accounting concerns become material.", "Liquidity or debt metrics breach risk thresholds.", "Thesis-critical growth assumptions fail."],
+    )
+
+
+def _build_quality_checks(state: AgentState, report: DDReport) -> ReportQualityChecks:
+    score = _overall_score_100(state, report)
+    dims: dict[str, float | int | str] = {"Overall Investment Score": score}
+    if report.business_quality.score is not None:
+        dims["Business Quality"] = report.business_quality.score
+    if report.management_analysis.score is not None:
+        dims["Management"] = report.management_analysis.score
+    if state.scorecard and state.scorecard.available:
+        for dim in state.scorecard.dimensions:
+            dims[dim.name] = dim.score
+    if report.earnings_quality.quality_label:
+        dims["Earnings Quality"] = report.earnings_quality.quality_label
+    return ReportQualityChecks(
+        claim_verification=f"{len(report.all_claims())} claims verified by citations and/or deterministic metrics.",
+        final_scorecard=dims,
+    )
+
+
 # ── Core write & revise ───────────────────────────────────────────────────────
 
 def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
@@ -634,7 +901,7 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
     )
 
     snapshot = state.market
-    return DDReport(
+    report = DDReport(
         company=CompanyMeta(
             name=state.company_name,
             ticker=state.ticker,
@@ -670,6 +937,17 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
         data_gaps=list(state.data_gaps),
         metadata=ReportMetadata(run_id=state.run_id),
     )
+    _backfill_missing_sections(report, state)
+    _enrich_risk_matrix(report)
+    report.business_quality = _build_business_quality(state)
+    report.management_analysis = _build_management_analysis(state)
+    report.segment_analysis = _build_segment_analysis()
+    report.industry_analysis = _build_industry_analysis(state)
+    report.dcf_analysis = _build_dcf_analysis(state)
+    report.institutional_summary = _build_institutional_summary(state, report)
+    report.investment_thesis = _build_investment_thesis(state, report)
+    report.quality_checks = _build_quality_checks(state, report)
+    return report
 
 
 def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
@@ -733,7 +1011,7 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
 def _partial_report(state: AgentState, reason: str) -> DDReport:
     """Metrics-only report when the writer LLM is unavailable."""
     snapshot = state.market
-    return DDReport(
+    report = DDReport(
         company=CompanyMeta(
             name=state.company_name or state.company_input,
             ticker=state.ticker,
@@ -753,6 +1031,16 @@ def _partial_report(state: AgentState, reason: str) -> DDReport:
         data_gaps=[*state.data_gaps, f"Report prose unavailable (writer LLM failed): {reason}"],
         metadata=ReportMetadata(run_id=state.run_id),
     )
+    _enrich_risk_matrix(report)
+    report.business_quality = _build_business_quality(state)
+    report.management_analysis = _build_management_analysis(state)
+    report.segment_analysis = _build_segment_analysis()
+    report.industry_analysis = _build_industry_analysis(state)
+    report.dcf_analysis = _build_dcf_analysis(state)
+    report.institutional_summary = _build_institutional_summary(state, report)
+    report.investment_thesis = _build_investment_thesis(state, report)
+    report.quality_checks = _build_quality_checks(state, report)
+    return report
 
 
 def writer_node(state: AgentState) -> dict[str, Any]:
@@ -776,6 +1064,20 @@ def writer_node(state: AgentState) -> dict[str, Any]:
     log.info("report_revised", revision=revision,
              max_revisions=settings.critic_max_revisions)
     return {"report": report, "revision_count": revision, "status": "revised"}
+
+
+_canonical_evidence_block = _evidence_block
+_canonical_synthetic_market_evidence = _synthetic_market_evidence
+_canonical_w_claim = _WClaim
+_canonical_w_risk = _WRisk
+_canonical_writer_output = _WriterOutput
+_canonical_revision = _Revision
+_canonical_context_payload = _context_payload
+_canonical_to_claims = _to_claims
+_canonical_full_write = _full_write
+_canonical_revise_claims = _revise_claims
+_canonical_partial_report = _partial_report
+_canonical_writer_node = writer_node
 
 log = get_logger(__name__)
 
@@ -1156,3 +1458,17 @@ def writer_node(state: AgentState) -> dict[str, Any]:
     log.info("report_revised", revision=revision,
              max_revisions=settings.critic_max_revisions)
     return {"report": report, "revision_count": revision, "status": "revised"}
+
+
+_evidence_block = _canonical_evidence_block
+_synthetic_market_evidence = _canonical_synthetic_market_evidence
+_WClaim = _canonical_w_claim
+_WRisk = _canonical_w_risk
+_WriterOutput = _canonical_writer_output
+_Revision = _canonical_revision
+_context_payload = _canonical_context_payload
+_to_claims = _canonical_to_claims
+_full_write = _canonical_full_write
+_revise_claims = _canonical_revise_claims
+_partial_report = _canonical_partial_report
+writer_node = _canonical_writer_node

@@ -4,9 +4,23 @@ from __future__ import annotations
 
 from app.report.schema import DDReport
 from app.state import Claim
+from typing import Any
 
 
-def _format_value(value: float, unit: str) -> str:
+def _safe_fmt(value: Any, fmt: str, default: str = "n/a") -> str:
+    """Format numeric values safely; return `default` when value is None."""
+    if value is None:
+        return default
+    try:
+        return format(value, fmt)
+    except Exception:
+        return default
+
+
+def _format_value(value: float | None, unit: str) -> str:
+    """Human-friendly rendering for numeric metric values. Returns 'n/a' for missing values."""
+    if value is None:
+        return "n/a"
     if unit == "USD" and abs(value) >= 1e9:
         return f"${value / 1e9:,.1f}B"
     if unit == "USD" and abs(value) >= 1e6:
@@ -51,6 +65,33 @@ def render_markdown(report: DDReport) -> str:
         lines.append(f"_Sector: {report.company.sector} / {report.company.industry}_")
     lines.append("")
 
+    inst = report.institutional_summary
+    lines += [
+        "## Institutional Decision Summary",
+        "",
+        f"- Investment rating: **{inst.investment_rating}**",
+        f"- Confidence score: **{inst.confidence_score}/100**",
+        f"- Investment horizon: **{inst.investment_horizon}**",
+        f"- Expected return range: {inst.expected_return_range}",
+        "",
+        "**Key Bull Thesis**",
+        "",
+        *[f"- {item}" for item in inst.key_bull_thesis],
+        "",
+        "**Key Bear Thesis**",
+        "",
+        *[f"- {item}" for item in inst.key_bear_thesis],
+        "",
+        "**Top Catalysts**",
+        "",
+        *[f"- {item}" for item in inst.top_catalysts],
+        "",
+        "**Top Risks**",
+        "",
+        *[f"- {item}" for item in inst.top_risks],
+        "",
+    ]
+
     # ── Investment Scorecard ────────────────────────────────────
     sc = report.scorecard
     if sc.available and sc.composite_label:
@@ -70,6 +111,25 @@ def render_markdown(report: DDReport) -> str:
     lines += _render_section("Executive Summary", report.executive_summary)
     lines += _render_section("Business Overview", report.business_overview)
 
+    for title, section in (
+        ("Business Quality Analysis", report.business_quality),
+        ("Management Analysis", report.management_analysis),
+        ("Segment Analysis", report.segment_analysis),
+        ("Industry Analysis", report.industry_analysis),
+    ):
+        lines += [f"## {title}", ""]
+        if section.score is not None:
+            lines.append(f"**Score**: {section.score:.1f}/10")
+            lines.append("")
+        if section.summary:
+            lines.extend(f"- {item}" for item in section.summary)
+            lines.append("")
+        if section.data_unavailable:
+            lines.append("**Data unavailable or unverifiable**")
+            lines.append("")
+            lines.extend(f"- {item}" for item in section.data_unavailable)
+            lines.append("")
+
     # ── Financial Health ────────────────────────────────────────
     lines += ["## Financial Health", "", "| Metric | Value | Period |", "|---|---|---|"]
     for metric in report.financial_health.table.metrics:
@@ -81,22 +141,49 @@ def render_markdown(report: DDReport) -> str:
         lines.extend(f"- {_render_claim(c)}" for c in report.financial_health.commentary)
         lines.append("")
 
+    # ── DCF / Reverse DCF ──────────────────────────────────────
+    dcf = report.dcf_analysis
+    lines += ["## DCF and Reverse DCF", ""]
+    for case in (dcf.base_case, dcf.bull_case, dcf.bear_case):
+        lines.append(f"### {case.name}")
+        if case.intrinsic_value is not None:
+            lines.append(f"- Intrinsic value: ${case.intrinsic_value:,.2f}")
+        if case.expected_return_pct is not None:
+            lines.append(f"- Expected return: {case.expected_return_pct:+.1f}%")
+        lines.append(f"- Status: {case.status}")
+        if case.assumptions:
+            lines.extend(f"- Assumption: {assumption}" for assumption in case.assumptions)
+        lines.append("")
+    lines += [
+        f"- Reverse DCF: {dcf.reverse_dcf}",
+        f"- Margin of safety: {dcf.margin_of_safety}",
+        "",
+    ]
+
     # ── Valuation & Analyst Consensus ──────────────────────────
     v = report.valuation
     val_rows: list[tuple[str, str]] = []
-    if v.pe_ttm:       val_rows.append(("Trailing P/E",   f"{v.pe_ttm:.1f}x"))
-    if v.forward_pe:   val_rows.append(("Forward P/E",    f"{v.forward_pe:.1f}x"))
-    if v.ev_to_ebitda: val_rows.append(("EV/EBITDA",      f"{v.ev_to_ebitda:.1f}x"))
-    if v.price_to_sales: val_rows.append(("Price/Sales",  f"{v.price_to_sales:.1f}x"))
-    if v.price_to_book:  val_rows.append(("Price/Book",   f"{v.price_to_book:.1f}x"))
-    if v.beta:           val_rows.append(("Beta",          f"{v.beta:.2f}"))
-    if v.dividend_yield: val_rows.append(("Dividend yield", f"{v.dividend_yield*100:.2f}%"))
-    if v.payout_ratio:   val_rows.append(("Payout ratio",  f"{v.payout_ratio*100:.1f}%"))
-    if v.short_percent_float:
-        val_rows.append(("Short interest", f"{v.short_percent_float*100:.1f}% of float"))
-    if v.short_ratio:
-        val_rows.append(("Short ratio (days to cover)", f"{v.short_ratio:.1f}"))
-    if val_rows or v.target_mean or v.recommendation:
+    if v.pe_ttm is not None:
+        val_rows.append(("Trailing P/E", _safe_fmt(v.pe_ttm, ".1f") + "x"))
+    if v.forward_pe is not None:
+        val_rows.append(("Forward P/E", _safe_fmt(v.forward_pe, ".1f") + "x"))
+    if v.ev_to_ebitda is not None:
+        val_rows.append(("EV/EBITDA", _safe_fmt(v.ev_to_ebitda, ".1f") + "x"))
+    if v.price_to_sales is not None:
+        val_rows.append(("Price/Sales", _safe_fmt(v.price_to_sales, ".1f") + "x"))
+    if v.price_to_book is not None:
+        val_rows.append(("Price/Book", _safe_fmt(v.price_to_book, ".1f") + "x"))
+    if v.beta is not None:
+        val_rows.append(("Beta", _safe_fmt(v.beta, ".2f")))
+    if v.dividend_yield is not None:
+        val_rows.append(("Dividend yield", _safe_fmt(v.dividend_yield * 100, ".2f") + "%"))
+    if v.payout_ratio is not None:
+        val_rows.append(("Payout ratio", _safe_fmt(v.payout_ratio * 100, ".1f") + "%"))
+    if v.short_percent_float is not None:
+        val_rows.append(("Short interest", _safe_fmt(v.short_percent_float * 100, ".1f") + "% of float"))
+    if v.short_ratio is not None:
+        val_rows.append(("Short ratio (days to cover)", _safe_fmt(v.short_ratio, ".1f")))
+    if val_rows or v.target_mean is not None or v.recommendation:
         lines += ["## Valuation & Market Data", ""]
         if val_rows:
             lines += ["| Metric | Value |", "|---|---|"]
@@ -106,24 +193,28 @@ def render_markdown(report: DDReport) -> str:
             rec_label = v.recommendation.replace("_", " ").title()
             lines.append(
                 f"**Analyst Consensus**: {rec_label}"
-                + (f" (mean score {v.recommendation_mean:.1f}/5)" if v.recommendation_mean else "")
+                + (f" (mean score {_safe_fmt(v.recommendation_mean, '.1f')}/5)" if v.recommendation_mean is not None else "")
                 + (f" · {v.num_analysts} analysts" if v.num_analysts else "")
             )
-        if v.target_mean:
-            lines.append(
-                f"**12-Month Price Target**: mean ${v.target_mean:.2f}"
-                + (f" · high ${v.target_high:.2f} · low ${v.target_low:.2f}"
-                   if v.target_high and v.target_low else "")
+        if v.target_mean is not None:
+            high_low = (
+                f" · high ${_safe_fmt(v.target_high, '.2f')} · low ${_safe_fmt(v.target_low, '.2f')}"
+                if (v.target_high is not None and v.target_low is not None)
+                else ""
             )
+            lines.append(f"**12-Month Price Target**: mean ${_safe_fmt(v.target_mean, '.2f')}" + high_low)
         if v.peers:
             lines += ["", "**Peer Comparison**", "", "| Peer | P/E | P/S | EV/EBITDA | P/B |",
                       "|---|---|---|---|---|"]
             for p in v.peers:
-                lines.append(
-                    f"| {p.ticker} | {p.pe_ttm:.1f}x | {p.price_to_sales:.1f}x "
-                    f"| {p.ev_to_ebitda:.1f}x | {p.price_to_book:.1f}x |".replace(
-                        " None.0x", " —").replace(" Nonex", " —")
-                )
+                def _m(val):
+                    return (_safe_fmt(val, ".1f") + "x") if val is not None else "—"
+
+                pe = _m(p.pe_ttm)
+                ps = _m(p.price_to_sales)
+                ev = _m(p.ev_to_ebitda)
+                pb = _safe_fmt(p.price_to_book, ".1f") if p.price_to_book is not None else "—"
+                lines.append(f"| {p.ticker} | {pe} | {ps} | {ev} | {pb} |")
         if v.commentary:
             lines.append("")
             lines.extend(f"- {_render_claim(c)}" for c in v.commentary)
@@ -156,10 +247,32 @@ def render_markdown(report: DDReport) -> str:
     for risk in report.risk_matrix:
         lines.append(f"### {risk.title} — severity: {risk.severity}, likelihood: {risk.likelihood}")
         lines.extend(f"- {_render_claim(c)}" for c in risk.claims)
+        lines.append(f"- Mitigation: {risk.mitigation}")
+        if risk.monitoring_metrics:
+            lines.append("- Monitoring metrics: " + "; ".join(risk.monitoring_metrics))
         lines.append("")
 
     lines += _render_section("Recent Developments", report.recent_developments)
     lines += _render_section("Red Flags", report.red_flags)
+
+    # ── Investment Thesis ─────────────────────────────────────
+    thesis = report.investment_thesis
+    lines += ["## Investment Thesis", ""]
+    for title, items in (
+        ("Bull Case", thesis.bull_case),
+        ("Base Case", thesis.base_case),
+        ("Bear Case", thesis.bear_case),
+        ("Monitoring Metrics", thesis.monitoring_metrics),
+        ("Upgrade Triggers", thesis.upgrade_triggers),
+        ("Downgrade Triggers", thesis.downgrade_triggers),
+        ("Exit Triggers", thesis.exit_triggers),
+    ):
+        lines.append(f"**{title}**")
+        lines.append("")
+        lines.extend(f"- {item}" for item in items)
+        lines.append("")
+    lines.append(f"**Probability Weighted Outcome**: {thesis.probability_weighted_outcome}")
+    lines.append("")
 
     # ── Insider Activity ────────────────────────────────────────
     ia = report.insider_activity
@@ -198,6 +311,21 @@ def render_markdown(report: DDReport) -> str:
     lines.append("")
 
     # ── Run Metadata ────────────────────────────────────────────
+    lines += [
+        "## Report Quality Checks",
+        "",
+        f"- Claim verification: {report.quality_checks.claim_verification}",
+        f"- Source policy: {report.quality_checks.source_policy}",
+        f"- Stale data policy: {report.quality_checks.stale_data_policy}",
+        f"- Unavailable-data policy: {report.quality_checks.unavailable_policy}",
+        "",
+        "| Dimension | Score / Label |",
+        "|---|---|",
+    ]
+    for key, value in report.quality_checks.final_scorecard.items():
+        lines.append(f"| {key} | {value} |")
+    lines.append("")
+
     lines += [
         "## Run Metadata",
         "",

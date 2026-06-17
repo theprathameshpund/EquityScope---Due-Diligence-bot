@@ -49,6 +49,8 @@ class RiskEntry(BaseModel):
     title: str
     severity: Severity
     likelihood: Likelihood
+    mitigation: str = "Data unavailable or unverifiable."
+    monitoring_metrics: list[str] = Field(default_factory=list)
     claims: list[Claim] = Field(default_factory=list)
 
 
@@ -101,6 +103,58 @@ class InvestmentScorecardSection(BaseModel):
     composite_label: str = ""   # "Strong Buy", "Buy", "Hold", "Reduce", "Sell"
 
 
+class InstitutionalExecutiveSummary(BaseModel):
+    investment_rating: str = "Hold"
+    confidence_score: int = Field(default=50, ge=0, le=100)
+    investment_horizon: str = "3 Year"
+    key_bull_thesis: list[str] = Field(default_factory=list)
+    key_bear_thesis: list[str] = Field(default_factory=list)
+    top_catalysts: list[str] = Field(default_factory=list)
+    top_risks: list[str] = Field(default_factory=list)
+    expected_return_range: str = "Data unavailable or unverifiable."
+
+
+class QualitativeAnalysisSection(BaseModel):
+    score: float | None = Field(default=None, ge=0, le=10)
+    summary: list[str] = Field(default_factory=list)
+    data_unavailable: list[str] = Field(default_factory=list)
+
+
+class ValuationCase(BaseModel):
+    name: str
+    intrinsic_value: float | None = None
+    expected_return_pct: float | None = None
+    assumptions: list[str] = Field(default_factory=list)
+    status: str = "Data unavailable or unverifiable."
+
+
+class DCFAnalysisSection(BaseModel):
+    base_case: ValuationCase = Field(default_factory=lambda: ValuationCase(name="Base Case"))
+    bull_case: ValuationCase = Field(default_factory=lambda: ValuationCase(name="Bull Case"))
+    bear_case: ValuationCase = Field(default_factory=lambda: ValuationCase(name="Bear Case"))
+    reverse_dcf: str = "Data unavailable or unverifiable."
+    margin_of_safety: str = "Data unavailable or unverifiable."
+
+
+class InvestmentThesisSection(BaseModel):
+    bull_case: list[str] = Field(default_factory=list)
+    base_case: list[str] = Field(default_factory=list)
+    bear_case: list[str] = Field(default_factory=list)
+    probability_weighted_outcome: str = "Data unavailable or unverifiable."
+    monitoring_metrics: list[str] = Field(default_factory=list)
+    upgrade_triggers: list[str] = Field(default_factory=list)
+    downgrade_triggers: list[str] = Field(default_factory=list)
+    exit_triggers: list[str] = Field(default_factory=list)
+
+
+class ReportQualityChecks(BaseModel):
+    claim_verification: str = ""
+    source_policy: str = "Free sources only: SEC EDGAR/XBRL, Yahoo Finance/yfinance, Google News RSS, FRED when configured."
+    stale_data_policy: str = "Prefer latest fiscal year and TTM/current market data when available."
+    unavailable_policy: str = "Data unavailable or unverifiable."
+    final_scorecard: dict[str, float | int | str] = Field(default_factory=dict)
+
+
 class ReportMetadata(BaseModel):
     run_id: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -115,17 +169,35 @@ class DDReport(BaseModel):
     """The full due diligence report. The writer agent emits this schema."""
 
     company: CompanyMeta
+    institutional_summary: InstitutionalExecutiveSummary = Field(
+        default_factory=InstitutionalExecutiveSummary
+    )
     executive_summary: list[Claim] = Field(default_factory=list)
     business_overview: list[Claim] = Field(default_factory=list)
+    business_quality: QualitativeAnalysisSection = Field(
+        default_factory=QualitativeAnalysisSection
+    )
+    management_analysis: QualitativeAnalysisSection = Field(
+        default_factory=QualitativeAnalysisSection
+    )
+    segment_analysis: QualitativeAnalysisSection = Field(
+        default_factory=QualitativeAnalysisSection
+    )
     financial_health: FinancialHealthSection = Field(default_factory=FinancialHealthSection)
     valuation: ValuationSection = Field(default_factory=ValuationSection)
+    dcf_analysis: DCFAnalysisSection = Field(default_factory=DCFAnalysisSection)
     earnings_quality: EarningsQualitySection = Field(default_factory=EarningsQualitySection)
+    industry_analysis: QualitativeAnalysisSection = Field(
+        default_factory=QualitativeAnalysisSection
+    )
     insider_activity: InsiderActivitySection = Field(default_factory=InsiderActivitySection)
     scorecard: InvestmentScorecardSection = Field(default_factory=InvestmentScorecardSection)
     risk_matrix: list[RiskEntry] = Field(default_factory=list)
     recent_developments: list[Claim] = Field(default_factory=list)
     red_flags: list[Claim] = Field(default_factory=list)
+    investment_thesis: InvestmentThesisSection = Field(default_factory=InvestmentThesisSection)
     management_questions: list[str] = Field(default_factory=list)
+    quality_checks: ReportQualityChecks = Field(default_factory=ReportQualityChecks)
     data_gaps: list[str] = Field(default_factory=list)
     metadata: ReportMetadata
 

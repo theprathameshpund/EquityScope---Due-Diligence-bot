@@ -16,12 +16,11 @@ setup:
 	$(PYTHON) -m venv $(VENV)
 	$(VENV_PY) -m pip install --upgrade pip
 	$(VENV_PY) -m pip install -e ".[dev]"
-	@test -f ../.env || cp ../.env.example ../.env
+	@test -f .env || cp .env.example .env
 	@echo "Setup complete. Fill in GROQ_API_KEY and EDGAR_USER_AGENT in .env"
 
 dev:
-	docker compose -f ../docker-compose.yml up -d qdrant postgres redis
-	$(VENV_PY) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+	$(VENV_PY) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 up:
 	docker compose -f ../docker-compose.yml up -d --build

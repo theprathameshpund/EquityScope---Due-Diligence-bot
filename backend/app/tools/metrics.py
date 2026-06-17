@@ -42,7 +42,47 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     anomalies: list[str] = []
 
     revenue = _by_year(facts.facts.get("revenue", []))
-    years = sorted(revenue)[-4:]
+    all_revenue_years = sorted(revenue)
+    years = all_revenue_years[-4:]
+
+    if all_revenue_years:
+        latest = all_revenue_years[-1]
+        metrics.append(
+            MetricValue(
+                metric_id="revenue",
+                name=f"Revenue FY{latest}",
+                value=round(revenue[latest], 0),
+                unit="USD",
+                period=f"FY{latest}",
+                inputs={f"revenue_fy{latest}": revenue[latest]},
+                formula="reported revenue",
+            )
+        )
+
+    for span_years, metric_id in ((5, "revenue_cagr_5y"), (10, "revenue_cagr_10y")):
+        if len(all_revenue_years) >= 2:
+            latest = all_revenue_years[-1]
+            target_start = latest - span_years
+            eligible = [year for year in all_revenue_years if year <= target_start]
+            if eligible:
+                first = eligible[-1]
+                span = latest - first
+                growth = cagr(revenue[first], revenue[latest], span)
+                if growth is not None:
+                    metrics.append(
+                        MetricValue(
+                            metric_id=metric_id,
+                            name=f"Revenue CAGR FY{first}->FY{latest}",
+                            value=round(growth, 2),
+                            unit="%",
+                            period=f"FY{first}-FY{latest}",
+                            inputs={
+                                f"revenue_fy{first}": revenue[first],
+                                f"revenue_fy{latest}": revenue[latest],
+                            },
+                            formula=f"((end/begin)^(1/{span}) - 1) * 100",
+                        )
+                    )
 
     # ── Revenue growth (3y CAGR + YoY) ────────────────────────
     if len(years) >= 2:
@@ -92,6 +132,24 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
         "operating_margin": _by_year(facts.facts.get("operating_income", [])),
         "net_margin": _by_year(facts.facts.get("net_income", [])),
     }
+    for metric_id, label, source in (
+        ("gross_profit", "Gross profit", gross_profit),
+        ("operating_income", "Operating income", _by_year(facts.facts.get("operating_income", []))),
+        ("net_income", "Net income", _by_year(facts.facts.get("net_income", []))),
+    ):
+        if source:
+            y = sorted(source)[-1]
+            metrics.append(
+                MetricValue(
+                    metric_id=metric_id,
+                    name=f"{label} FY{y}",
+                    value=round(source[y], 0),
+                    unit="USD",
+                    period=f"FY{y}",
+                    inputs={f"{metric_id}_fy{y}": source[y]},
+                    formula=f"reported {label.lower()}",
+                )
+            )
     for margin_id, source in margin_sources.items():
         margin_years = [y for y in years if y in source and y in revenue]
         if not margin_years:

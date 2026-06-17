@@ -12,13 +12,17 @@ import os
 from pathlib import Path
 from typing import Literal
 
-import truststore
 from pydantic import Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Trust the OS certificate store (corporate TLS-interception proxies install
 # their root CA there, but Python's bundled certifi does not include it).
-truststore.inject_into_ssl()
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
 
 # curl_cffi (used by yfinance) bypasses Python's ssl module; point it at a
 # PEM bundle of certifi + OS roots when one has been generated (see README).
@@ -66,17 +70,20 @@ class Settings(BaseSettings):
     groq_tpm_smart: int = Field(default=5_500, ge=0)   # 70b: real limit 6k
 
     # ── Embeddings ─────────────────────────────────────────────
-    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_device: str = "cpu"
     hf_hub_offline: bool = False  # set True in .env once model is cached locally
+    preload_embeddings: bool = False
 
     # ── Vector DB ──────────────────────────────────────────────
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "equityscope_filings"
+    qdrant_local_path: Path = Path("data/qdrant")
 
     # ── Storage ────────────────────────────────────────────────
     postgres_dsn: str = "postgresql://equityscope:equityscope@localhost:5432/equityscope"
     redis_url: str = "redis://localhost:6379/0"
+    runtime_storage: Literal["local", "external"] = "local"
 
     # ── Data sources ───────────────────────────────────────────
     edgar_user_agent: str = ""

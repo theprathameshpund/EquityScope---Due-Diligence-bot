@@ -67,7 +67,7 @@ type StatusFilter = 'all' | 'done' | 'failed';
             <span class="avatar">{{ initials(run.company) }}</span>
             <div class="info">
               <div class="top">
-                <span class="name">{{ run.company || 'Unknown' }}</span>
+                <span class="name">{{ companyLabel(run.company) || 'Unknown' }}</span>
                 <span class="status {{ run.status }}"><i></i>{{ run.status }}</span>
               </div>
               <div class="sub">
@@ -208,6 +208,8 @@ export class RunsListComponent {
 
   initials(company: string): string {
     if (!company) return '?';
+    const ticker = this.extractTicker(company);
+    if (ticker) return ticker.toUpperCase().slice(0, 4);
     const clean = company.replace(/[^A-Za-z0-9 ]/g, '').trim();
     if (clean.length <= 4 && !clean.includes(' ')) return clean.toUpperCase();
     return clean
@@ -215,6 +217,32 @@ export class RunsListComponent {
       .slice(0, 2)
       .map((word) => word[0]?.toUpperCase() ?? '')
       .join('');
+  }
+
+  companyLabel(raw: string): string {
+    if (!raw) return '';
+    const ticker = this.extractTicker(raw);
+    if (ticker) return ticker.toUpperCase();
+    const name = this.extractName(raw);
+    if (name) return name;
+    // Fallback: shorten long raw strings
+    return raw.length > 36 ? raw.slice(0, 33) + '...' : raw;
+  }
+
+  private extractTicker(raw: string): string | null {
+    if (!raw) return null;
+    const m1 = raw.match(/['\"]ticker['\"]\s*:\s*['\"]([^'\"]+)['\"]/i);
+    if (m1) return m1[1];
+    const m2 = raw.match(/\b([A-Z]{1,5})\b/);
+    if (m2) return m2[1];
+    return null;
+  }
+
+  private extractName(raw: string): string | null {
+    if (!raw) return null;
+    const m = raw.match(/['\"]name['\"]\s*:\s*['\"]([^'\"]+)['\"]/i);
+    if (m) return m[1];
+    return null;
   }
 
   when(iso: string): string {

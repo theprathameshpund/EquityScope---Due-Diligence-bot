@@ -1,0 +1,48 @@
+# Core Dependencies
+pydantic>=2.8
+pydantic-settings>=2.4
+structlog>=24.1
+httpx>=0.27
+tenacity>=9.0
+
+# LangGraph and AI Orchestration
+langgraph>=0.2.60
+groq>=0.13
+anthropic>=0.40
+
+# Local Vector Store
+qdrant-client>=1.12
+
+# ML/Embeddings
+sentence-transformers>=3.0
+tiktoken>=0.8
+
+# API and Web Framework
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sse-starlette>=2.1
+
+# Financial Data and Web Scraping
+yfinance>=0.2.50
+feedparser>=6.0
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# Configuration and Security
+pyyaml>=6.0
+truststore>=0.10
+
+# Dev Dependencies (optional)
+# Uncomment to install: pip install -r requirements.txt -r requirements-dev.txt
+# Or pip install -e ".[dev]"
+# pytest>=8.3
+# pytest-asyncio>=0.24
+# ruff>=0.8
+# mypy>=1.13
+# types-PyYAML
+# types-beautifulsoup4
+
+# External service storage (optional; not needed for local uvicorn-only mode)
+# langgraph-checkpoint-postgres>=2.0.13
+# psycopg[binary]>=3.2
+# redis>=5.0

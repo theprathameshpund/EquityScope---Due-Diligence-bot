@@ -66,6 +66,21 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
 
       <!-- Verdict cards -->
       <div class="verdicts">
+        <div class="verdict">
+          <label>Investment rating</label>
+          <b class="tone-{{ labelTone(report.institutional_summary.investment_rating) }}">
+            {{ report.institutional_summary.investment_rating }}
+          </b>
+          <span>
+            {{ report.institutional_summary.confidence_score }}/100 confidence ·
+            {{ report.institutional_summary.investment_horizon }}
+          </span>
+        </div>
+        <div class="verdict">
+          <label>Expected return</label>
+          <b class="mono">{{ report.institutional_summary.expected_return_range }}</b>
+          <span>free-source verified range when available</span>
+        </div>
         @if (report.scorecard.available && report.scorecard.composite_label) {
           <div class="verdict">
             <label>Scorecard</label>
@@ -391,6 +406,9 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
         <div class="downloads no-print">
           <button class="btn btn-ghost" (click)="download('md')">
             <app-icon name="download" [size]="14" /> Markdown
+          </button>
+          <button class="btn btn-ghost" (click)="openHtmlPreview()">
+            <app-icon name="download" [size]="14" /> HTML
           </button>
           <button class="btn btn-ghost" (click)="download('json')">
             <app-icon name="download" [size]="14" /> JSON
@@ -863,10 +881,98 @@ export class ReportViewComponent {
     return metric.unit === 'bps' && metric.value < 0;
   }
 
+  openHtmlPreview(): void {
+    const data = this.data();
+    const reportRoot = document.querySelector('app-report-view');
+    if (!reportRoot) {
+      return;
+    }
+
+    const clone = reportRoot.cloneNode(true) as HTMLElement;
+    const newWindow = window.open('', '_blank');
+    if (!newWindow) {
+      return;
+    }
+
+    const styleElements = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((node) => node.outerHTML)
+      .join('\n');
+
+    const title = `Report: ${data.company} (${data.run_id})`;
+    const theme = document.documentElement.dataset['theme'] ?? 'light';
+
+    newWindow.document.write(`<!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8" />
+          <title>${title}</title>
+          ${styleElements}
+          <style>
+            body { margin: 0; padding: 1.5rem; min-height: 100vh; }
+            .preview-toolbar {
+              display: flex; justify-content: flex-end; gap: 0.75rem;
+              position: sticky; top: 0; background: #fff; z-index: 999;
+              border-bottom: 1px solid rgba(0, 0, 0, 0.08); padding: 0.75rem 1rem;
+            }
+            .preview-toolbar button {
+              appearance: none; border: 1px solid #999; background: #fff;
+              color: #111; padding: 0.55rem 0.9rem; border-radius: 999px;
+              cursor: pointer; font: inherit;
+            }
+            .preview-toolbar button:hover { background: #f4f4f4; }
+            #report-root { margin-top: 1rem; }
+          </style>
+        </head>
+        <body data-theme="${theme}">
+          <div class="preview-toolbar">
+            <button id="downloadJson">Download JSON</button>
+            <button id="downloadHtml">Download HTML</button>
+          </div>
+          <div id="report-root"></div>
+        </body>
+      </html>`);
+
+    const reportContainer = newWindow.document.getElementById('report-root');
+    if (reportContainer) {
+      reportContainer.appendChild(clone);
+    }
+
+    const downloadJsonButton = newWindow.document.getElementById('downloadJson');
+    const downloadHtmlButton = newWindow.document.getElementById('downloadHtml');
+
+    downloadJsonButton?.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(data.report ?? {}, null, 2)], {
+        type: 'application/json',
+      });
+      const anchor = newWindow.document.createElement('a');
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = `equityscope_${data.run_id}.json`;
+      newWindow.document.body.appendChild(anchor);
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+      anchor.remove();
+    });
+
+    downloadHtmlButton?.addEventListener('click', () => {
+      const blob = new Blob([newWindow.document.documentElement.outerHTML], {
+        type: 'text/html',
+      });
+      const anchor = newWindow.document.createElement('a');
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = `equityscope_${data.run_id}.html`;
+      newWindow.document.body.appendChild(anchor);
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+      anchor.remove();
+    });
+
+    newWindow.document.close();
+  }
+
   download(kind: 'md' | 'json'): void {
     const data = this.data();
     const content =
-      kind === 'md' ? (data.markdown ?? '') : JSON.stringify(data.report, null, 2);
+      kind === 'md' ? (data.markdown ?? '') : JSON.stringify(data.report ?? {}, null, 2);
     const blob = new Blob([content], {
       type: kind === 'md' ? 'text/markdown' : 'application/json',
     });

@@ -7,8 +7,6 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import psycopg
-import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -25,7 +23,11 @@ log = get_logger(__name__)
 async def _fail_orphaned_runs() -> None:
     """Runs execute in this process; anything still 'running' at startup was
     killed by a restart. Mark it failed so the UI never waits forever."""
+    if settings.runtime_storage == "local":
+        return
     try:
+        import redis.asyncio as aioredis
+
         client = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
@@ -60,20 +62,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     
     await _fail_orphaned_runs()
     
-    # Start embedding model pre-load in background (non-blocking)
-    # This allows the API to accept requests immediately while the model loads
-    def _background_preload_embeddings() -> None:
-        try:
-            from app.rag.embeddings import get_embedder, embedding_dim
-            log.info("preloading_embedding_model", model=settings.embedding_model)
-            get_embedder()  # triggers lazy load
-            dim = embedding_dim()
-            log.info("embedding_model_ready", dimension=dim)
-        except Exception as exc:
-            log.warning("embedding_model_preload_failed", error=str(exc))
-    
-    # Schedule pre-load as a background task (doesn't block startup)
-    asyncio.create_task(asyncio.to_thread(_background_preload_embeddings))
+    if settings.preload_embeddings:
+        def _background_preload_embeddings() -> None:
+            try:
+                from app.rag.embeddings import embedding_dim, get_embedder
+
+                log.info("preloading_embedding_model", model=settings.embedding_model)
+                get_embedder()
+                dim = embedding_dim()
+                log.info("embedding_model_ready", dimension=dim)
+            except Exception as exc:
+                log.warning("embedding_model_preload_failed", error=str(exc))
+
+        asyncio.create_task(asyncio.to_thread(_background_preload_embeddings))
     
     yield
     log.info("api_stopped")
@@ -111,6 +112,14 @@ def create_app() -> FastAPI:
         Hard 3-second overall timeout — this endpoint NEVER hangs.
         All three checks run in parallel via asyncio.gather.
         """
+        try:
+            if settings.runtime_storage == "local":
+                log.info("healthz_local_mode")
+                return HealthResponse(status="ok", qdrant=True, postgres=True, redis=True)
+        except Exception as exc:
+            log.error("healthz_early_error", error=str(exc))
+            return HealthResponse(status="ok", qdrant=True, postgres=True, redis=True)
+
         import httpx
 
         async def _check_qdrant() -> bool:
@@ -125,6 +134,7 @@ def create_app() -> FastAPI:
         async def _check_postgres() -> bool:
             try:
                 def _sync() -> bool:
+                    import psycopg
                     import socket
                     socket.setdefaulttimeout(1.5)
                     with psycopg.connect(
@@ -139,6 +149,8 @@ def create_app() -> FastAPI:
 
         async def _check_redis() -> bool:
             try:
+                import redis.asyncio as aioredis
+
                 client_r = aioredis.from_url(
                     settings.redis_url, decode_responses=True,
                     socket_connect_timeout=1, socket_timeout=1,

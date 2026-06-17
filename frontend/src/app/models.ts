@@ -111,6 +111,58 @@ export interface InvestmentScorecardSection {
   composite_label: string;
 }
 
+export interface InstitutionalExecutiveSummary {
+  investment_rating: string;
+  confidence_score: number;
+  investment_horizon: string;
+  key_bull_thesis: string[];
+  key_bear_thesis: string[];
+  top_catalysts: string[];
+  top_risks: string[];
+  expected_return_range: string;
+}
+
+export interface QualitativeAnalysisSection {
+  score: number | null;
+  summary: string[];
+  data_unavailable: string[];
+}
+
+export interface ValuationCase {
+  name: string;
+  intrinsic_value: number | null;
+  expected_return_pct: number | null;
+  assumptions: string[];
+  status: string;
+}
+
+export interface DCFAnalysisSection {
+  base_case: ValuationCase;
+  bull_case: ValuationCase;
+  bear_case: ValuationCase;
+  reverse_dcf: string;
+  margin_of_safety: string;
+}
+
+export interface InvestmentThesisSection {
+  bull_case: string[];
+  base_case: string[];
+  bear_case: string[];
+  probability_weighted_outcome: string;
+  monitoring_metrics: string[];
+  upgrade_triggers: string[];
+  downgrade_triggers: string[];
+  exit_triggers: string[];
+}
+
+export interface ReportQualityChecks {
+  claim_verification: string;
+  source_policy: string;
+  stale_data_policy: string;
+  unavailable_policy: string;
+  final_scorecard: Record<string, number | string>;
+}
+
 export interface ReportMetadata {
   run_id: string;
   generated_at: string;
@@ -123,17 +175,25 @@ export interface ReportMetadata {
 
 export interface DDReport {
   company: { name: string; ticker: string; cik: string; sector: string; industry: string };
+  institutional_summary: InstitutionalExecutiveSummary;
   executive_summary: Claim[];
   business_overview: Claim[];
+  business_quality: QualitativeAnalysisSection;
+  management_analysis: QualitativeAnalysisSection;
+  segment_analysis: QualitativeAnalysisSection;
   financial_health: { table: { metrics: MetricValue[] }; commentary: Claim[] };
   valuation: ValuationSection;
+  dcf_analysis: DCFAnalysisSection;
   earnings_quality: EarningsQualitySection;
+  industry_analysis: QualitativeAnalysisSection;
   insider_activity: InsiderActivitySection;
   scorecard: InvestmentScorecardSection;
   risk_matrix: RiskEntry[];
   recent_developments: Claim[];
   red_flags: Claim[];
+  investment_thesis: InvestmentThesisSection;
   management_questions: string[];
+  quality_checks: ReportQualityChecks;
   data_gaps: string[];
   metadata: ReportMetadata;
 }

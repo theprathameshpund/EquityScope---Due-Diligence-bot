@@ -9,14 +9,13 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from typing import cast
 
-import redis.asyncio as aioredis
-from redis.exceptions import RedisError
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.agents.orchestrator import (
     EVENTS_CHANNEL,
     EVENTS_LIST,
+    REPORTS_DIR,
     RUN_KEY,
     get_memory_event_log,
     get_memory_run_status,
@@ -87,7 +86,50 @@ async def create_report(
 @router.get("/reports", response_model=RunListResponse)
 async def list_reports() -> RunListResponse:
     """Recent runs (newest first) so the UI can reopen past reports."""
+    if settings.runtime_storage == "local":
+        # Prefer in-memory recent runs, but if none exist (e.g. after a restart),
+        # fall back to reading saved reports from disk so the UI shows recent runs.
+        runs: list[RunSummary] = []
+        mem = list_memory_run_statuses()
+        if mem:
+            runs = [
+                RunSummary(
+                    run_id=str(data.get("run_id", "")),
+                    status=str(data.get("status", "unknown")),
+                    company=str(data.get("company", "")),
+                    updated_at=str(data.get("updated_at", "")),
+                    cost_usd=((data.get("report") or {}).get("metadata") or {}).get("cost_usd"),
+                    tokens_used=((data.get("report") or {}).get("metadata") or {}).get("tokens_used"),
+                )
+                for data in mem
+            ]
+        else:
+            # No in-memory runs — scan REPORTS_DIR for saved JSON reports.
+            try:
+                from app.agents.orchestrator import REPORTS_DIR
+
+                for path in sorted(REPORTS_DIR.glob('*.json'), reverse=True):
+                    try:
+                        raw = json.loads(path.read_text(encoding='utf-8'))
+                    except Exception:
+                        continue
+                    runs.append(
+                        RunSummary(
+                            run_id=str(raw.get('metadata', {}).get('run_id', path.stem)),
+                            status=str(raw.get('metadata', {}).get('status', 'done')),
+                            company=str(raw.get('company', '') or raw.get('metadata', {}).get('company', '')),
+                            updated_at=str(raw.get('metadata', {}).get('updated_at', '')),
+                            cost_usd=raw.get('metadata', {}).get('cost_usd'),
+                            tokens_used=raw.get('metadata', {}).get('tokens_used'),
+                        )
+                    )
+            except Exception as exc:
+                log.warning('reports_dir_scan_failed', error=str(exc))
+        runs.sort(key=lambda r: r.updated_at, reverse=True)
+        return RunListResponse(runs=runs[:50])
+
     try:
+        import redis.asyncio as aioredis
         client = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
@@ -119,7 +161,7 @@ async def list_reports() -> RunListResponse:
             await client.aclose()
         runs.sort(key=lambda r: r.updated_at, reverse=True)
         return RunListResponse(runs=runs[:50])
-    except (RedisError, OSError, asyncio.TimeoutError) as exc:
+    except Exception as exc:
         log.warning("redis_unavailable_list_reports", error=str(exc))
         runs = [
             RunSummary(
@@ -138,7 +180,64 @@ async def list_reports() -> RunListResponse:
 
 @router.get("/reports/{run_id}", response_model=ReportStatusResponse)
 async def get_report(run_id: str) -> ReportStatusResponse:
+    if settings.runtime_storage == "local":
+        data = get_memory_run_status(run_id)
+        if data is None:
+            # Try to load a saved report from disk when in-memory state is gone.
+            try:
+                path = REPORTS_DIR / f"{run_id}.json"
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and raw.get("report") is None:
+                    # Persisted JSON stores the raw DDReport object.
+                    company_data = raw.get("company", {})
+                    company_text = ""
+                    if isinstance(company_data, dict):
+                        company_text = str(
+                            company_data.get("ticker")
+                            or company_data.get("name")
+                            or raw.get("metadata", {}).get("company", "")
+                        )
+                    else:
+                        company_text = str(company_data)
+                    markdown_path = REPORTS_DIR / f"{run_id}.md"
+                    markdown = None
+                    if markdown_path.exists():
+                        markdown = markdown_path.read_text(encoding="utf-8")
+                    return ReportStatusResponse(
+                        run_id=run_id,
+                        status="done",
+                        company=company_text,
+                        report=raw,
+                        markdown=markdown,
+                        evidence=None,
+                        error=None,
+                    )
+                return ReportStatusResponse(
+                    run_id=run_id,
+                    status=str(raw.get("status", "done")),
+                    company=str(raw.get("company", "")),
+                    report=raw.get("report"),
+                    markdown=None,
+                    evidence=None,
+                    error=None,
+                )
+            except FileNotFoundError:
+                return ReportStatusResponse(run_id=run_id, status="queued")
+            except Exception as exc:
+                log.warning("report_load_failed", run_id=run_id, error=str(exc))
+                return ReportStatusResponse(run_id=run_id, status="queued")
+        return ReportStatusResponse(
+            run_id=run_id,
+            status=str(data.get("status", "unknown")),
+            company=str(data.get("company", "")),
+            report=data.get("report"),
+            markdown=data.get("markdown"),
+            evidence=data.get("evidence"),
+            error=data.get("error"),
+        )
+
     try:
+        import redis.asyncio as aioredis
         client = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
@@ -149,7 +248,7 @@ async def get_report(run_id: str) -> ReportStatusResponse:
             raw = await client.get(RUN_KEY.format(run_id=run_id))
         finally:
             await client.aclose()
-    except (RedisError, OSError, asyncio.TimeoutError) as exc:
+    except Exception as exc:
         log.warning("redis_unavailable_get_report", run_id=run_id, error=str(exc))
         data = get_memory_run_status(run_id)
         if data is None:
@@ -195,6 +294,20 @@ async def get_report(run_id: str) -> ReportStatusResponse:
 
 async def _event_stream(run_id: str) -> AsyncIterator[dict[str, str]]:
     """Replay logged events, then follow live pub/sub until the run ends."""
+    if settings.runtime_storage == "local":
+        seen = 0
+        idle_deadline = time.monotonic() + 1800
+        while time.monotonic() < idle_deadline:
+            rows = get_memory_event_log(run_id, seen)
+            for raw in rows:
+                seen += 1
+                yield {"event": "progress", "data": raw}
+                if _is_terminal(raw):
+                    return
+            await asyncio.sleep(1.0)
+        return
+
+    import redis.asyncio as aioredis
     client = aioredis.from_url(
         settings.redis_url,
         decode_responses=True,
@@ -232,7 +345,7 @@ async def _event_stream(run_id: str) -> AsyncIterator[dict[str, str]]:
             yield {"event": "progress", "data": raw}
             if _is_terminal(raw):
                 return
-    except (RedisError, OSError, asyncio.TimeoutError) as exc:
+    except Exception as exc:
         log.warning("redis_unavailable_event_stream", run_id=run_id, error=str(exc))
         seen = 0
         idle_deadline = time.monotonic() + 1800

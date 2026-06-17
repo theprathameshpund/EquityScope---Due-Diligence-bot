@@ -67,6 +67,7 @@ class MarketSnapshot(BaseModel):
     beta: float | None = None
     sector: str = ""
     industry: str = ""
+    officers: list[dict[str, str | int | float | None]] = Field(default_factory=list)
     # Analyst consensus & price targets (source: Yahoo Finance)
     recommendation: str = ""          # e.g. "buy", "hold", "sell", "strong_buy"
     recommendation_mean: float | None = None  # 1=Strong Buy, 5=Strong Sell

@@ -15,8 +15,6 @@ dependencies = [
     "httpx>=0.27",
     "tenacity>=9.0",
     "langgraph>=0.2.60",
-    "langgraph-checkpoint-postgres>=2.0.13",
-    "psycopg[binary]>=3.2",
     "qdrant-client>=1.12",
     "sentence-transformers>=3.0",
     "groq>=0.13",
@@ -24,7 +22,6 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sse-starlette>=2.1",
-    "redis>=5.0",
     "yfinance>=0.2.50",
     "feedparser>=6.0",
     "beautifulsoup4>=4.12",
@@ -42,6 +39,11 @@ dev = [
     "mypy>=1.13",
     "types-PyYAML",
     "types-beautifulsoup4",
+]
+external-storage = [
+    "langgraph-checkpoint-postgres>=2.0.13",
+    "psycopg[binary]>=3.2",
+    "redis>=5.0",
 ]
 
 [tool.setuptools.packages.find]

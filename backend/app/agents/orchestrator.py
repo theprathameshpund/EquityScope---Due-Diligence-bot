@@ -56,6 +56,8 @@ _memory_event_logs: dict[str, deque[str]] = {}
 
 
 def _redis() -> Any | None:
+    if settings.runtime_storage == "local":
+        return None
     try:
         import redis
 

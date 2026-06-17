@@ -62,6 +62,17 @@ def get_snapshot(ticker: str) -> MarketSnapshot:
         low_52w = float(closes.min())
 
     recommendation = str(info.get("recommendationKey") or "").lower()
+    officers: list[dict[str, str | int | float | None]] = []
+    for officer in cast("list[dict[str, Any]]", info.get("companyOfficers") or [])[:8]:
+        officers.append(
+            {
+                "name": str(officer.get("name") or ""),
+                "title": str(officer.get("title") or ""),
+                "age": _info_int(officer, "age") or None,
+                "total_pay": _info_float(officer, "totalPay"),
+                "year_born": _info_int(officer, "yearBorn") or None,
+            }
+        )
 
     return MarketSnapshot(
         available=True,
@@ -79,6 +90,7 @@ def get_snapshot(ticker: str) -> MarketSnapshot:
         beta=_info_float(info, "beta"),
         sector=str(info.get("sector") or ""),
         industry=str(info.get("industry") or ""),
+        officers=officers,
         # Analyst consensus
         recommendation=recommendation,
         recommendation_mean=_info_float(info, "recommendationMean"),

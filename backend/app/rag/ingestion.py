@@ -29,6 +29,9 @@ log = get_logger(__name__)
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:
+    if settings.runtime_storage == "local":
+        settings.qdrant_local_path.mkdir(parents=True, exist_ok=True)
+        return QdrantClient(path=str(settings.qdrant_local_path))
     return QdrantClient(url=settings.qdrant_url)
 
 
