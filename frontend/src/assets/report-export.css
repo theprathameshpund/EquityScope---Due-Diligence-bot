@@ -1,0 +1,61 @@
+/* Professional export stylesheet for HTML report previews
+   This file is injected into the exported/new-window HTML to ensure
+   a clean, readable, print-friendly layout independent of the app styles. */
+
+:root{
+  --brand:#0b5cff;
+  --ink:#0f1720;
+  --muted:#6b7280;
+  --bg:#ffffff;
+  --surface:#f8fafc;
+  --rule:#e6eefb;
+  --accent:#0b5cff;
+  --gold:#c59b00;
+  --radius:8px;
+}
+
+*{box-sizing:border-box}
+body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:var(--ink); background:var(--bg); margin:0; padding:2rem;}
+
+.container{max-width:960px; margin:0 auto; background:var(--bg);}
+.header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;border-bottom:1px solid var(--rule);padding-bottom:1rem;margin-bottom:1.25rem}
+.header .title{font-family: "Georgia", "Times New Roman", serif; font-size:1.6rem; font-weight:700; margin:0}
+.header .meta{color:var(--muted); font-size:0.9rem}
+
+.masthead{display:flex;flex-direction:row;gap:1rem;align-items:center}
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace}
+
+.verdicts{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px;margin-bottom:1rem}
+.verdict{background:var(--surface);padding:12px;border-radius:8px;border:1px solid var(--rule)}
+.verdict label{font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:0.06em}
+.verdict b{display:block;font-size:1.05rem;margin-top:6px}
+
+.section{margin-top:1.25rem}
+.section h3{font-family: "Georgia", serif;font-size:1.05rem;margin:0 0 8px 0}
+.section p{color:var(--muted);line-height:1.5}
+
+.claim{background:#fff;border-left:3px solid var(--rule);padding:10px 12px;margin-bottom:10px;border-radius:6px}
+.claim .evidence{font-size:0.85rem;color:var(--muted);margin-top:8px}
+
+.table{width:100%;border-collapse:collapse;margin-top:8px}
+.table th,.table td{padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:left}
+.table th{background:transparent;color:var(--muted);font-size:0.78rem;text-transform:uppercase}
+.table td.num{text-align:right;font-family: ui-monospace, monospace}
+
+.risk-grid{display:flex;flex-direction:column;gap:10px}
+.risk{padding:10px;border-radius:8px;background:#fff;border:1px solid var(--rule)}
+.risk .badges{display:flex;gap:8px}
+.badge{padding:4px 8px;border-radius:999px;background:#f1f5f9;font-weight:700;color:var(--muted);font-size:0.78rem}
+
+.preview-toolbar{display:flex;gap:8px;justify-content:flex-end;margin-bottom:12px}
+.preview-toolbar button{background:var(--brand);color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:700}
+.preview-toolbar button.secondary{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+
+.footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:0.9rem}
+
+/* Print-friendly tweaks */
+@media print{
+  body{padding:0.5in}
+  .preview-toolbar{display:none}
+  .container{max-width:100%;}
+}

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+﻿import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 
 import {
   Claim,
@@ -901,34 +901,22 @@ export class ReportViewComponent {
     const title = `Report: ${data.company} (${data.run_id})`;
     const theme = document.documentElement.dataset['theme'] ?? 'light';
 
+    // Inject the app styles plus a dedicated export stylesheet for nicer formatting
+    const exportCssLink = '<link rel="stylesheet" href="/assets/report-export.css">';
     newWindow.document.write(`<!doctype html>
       <html lang="en">
         <head>
           <meta charset="utf-8" />
           <title>${title}</title>
           ${styleElements}
-          <style>
-            body { margin: 0; padding: 1.5rem; min-height: 100vh; }
-            .preview-toolbar {
-              display: flex; justify-content: flex-end; gap: 0.75rem;
-              position: sticky; top: 0; background: #fff; z-index: 999;
-              border-bottom: 1px solid rgba(0, 0, 0, 0.08); padding: 0.75rem 1rem;
-            }
-            .preview-toolbar button {
-              appearance: none; border: 1px solid #999; background: #fff;
-              color: #111; padding: 0.55rem 0.9rem; border-radius: 999px;
-              cursor: pointer; font: inherit;
-            }
-            .preview-toolbar button:hover { background: #f4f4f4; }
-            #report-root { margin-top: 1rem; }
-          </style>
+          ${exportCssLink}
         </head>
         <body data-theme="${theme}">
           <div class="preview-toolbar">
             <button id="downloadJson">Download JSON</button>
             <button id="downloadHtml">Download HTML</button>
           </div>
-          <div id="report-root"></div>
+          <div id="report-root" class="container"></div>
         </body>
       </html>`);
 

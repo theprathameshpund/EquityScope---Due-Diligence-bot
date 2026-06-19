@@ -15,9 +15,9 @@ dist/
 .coverage
 htmlcov/
 
-# Data & artifacts (keep directory markers)
-data/filings/*
-!data/filings/.gitkeep
+# Data & artifacts
+data/filings/
+backend/data/filings/
 evals/results/*
 !evals/results/.gitkeep
 
@@ -38,7 +38,6 @@ frontend-angular/.angular/
 
 
 # backend
-data/filings/
 qdrant/
 reports/
 
