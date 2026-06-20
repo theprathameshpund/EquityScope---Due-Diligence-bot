@@ -1,4 +1,4 @@
-﻿"""LLM routing: task tier → provider/model, retries, token counting, cost.
+"""LLM routing: task tier ? provider/model, retries, token counting, cost.
 
 All LLM calls in EquityScope go through `LLMRouter`. It enforces the
 per-run token budget, counts tokens from provider usage data, and prices
@@ -42,7 +42,7 @@ class BudgetExceededError(RuntimeError):
 class RateLimitPacer:
     """Sliding-window pacing: keeps requests/minute and tokens/minute under
     the provider's published limits so calls wait instead of getting 429s.
-    Thread-safe — parallel agent nodes share one pacer per model tier."""
+    Thread-safe - parallel agent nodes share one pacer per model tier."""
 
     def __init__(self, rpm: int, tpm: int) -> None:
         self.rpm = rpm
@@ -61,7 +61,7 @@ class RateLimitPacer:
                 requests_ok = self.rpm <= 0 or len(self._events) < self.rpm
                 tokens_in_window = sum(tokens for _, tokens in self._events)
                 # If the window is empty and a single call exceeds TPM, allow it
-                # through anyway — we can't split one LLM request across windows.
+                # through anyway - we can't split one LLM request across windows.
                 window_empty = len(self._events) == 0
                 tokens_ok = (
                     self.tpm <= 0
@@ -84,6 +84,8 @@ class RateLimitPacer:
 
 _pacers: dict[tuple[str, str], RateLimitPacer] = {}
 _pacers_lock = threading.Lock()
+_groq_key_index = 0
+_groq_key_lock = threading.Lock()
 
 
 def _get_pacer(provider: str, price_tier: str) -> RateLimitPacer:
@@ -153,7 +155,7 @@ def load_prompt(name: str) -> str:
 
 
 def _is_quota_exhausted(exc: BaseException) -> bool:
-    """Provider quota errors that retrying cannot fix inside one run —
+    """Provider quota errors that retrying cannot fix inside one run -
     daily token caps (TPD) or requests too large for the per-minute window."""
     message = str(exc)
     return "rate_limit_exceeded" in message or "Error code: 429" in message or (
@@ -192,7 +194,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 def _route(tier: TaskTier) -> tuple[str, str, str]:
-    """tier → (provider, model, price_tier)."""
+    """tier ? (provider, model, price_tier)."""
     if tier == "fast":
         return "groq", settings.groq_model_fast, "fast"
     if tier == "smart":
@@ -210,14 +212,14 @@ class LLMRouter:
         self.run_id = run_id
         self.tracker = get_tracker(run_id)
 
-    # ── provider clients (lazy) ───────────────────────────────
+    # -- provider clients (lazy) ---------------------
 
     @staticmethod
-    @lru_cache(maxsize=1)
-    def _groq_client() -> object:
+    @lru_cache(maxsize=3)
+    def _groq_client(api_key: str) -> object:
         from groq import Groq
 
-        return Groq(api_key=settings.groq_api_key, timeout=settings.llm_request_timeout_s)
+        return Groq(api_key=api_key, timeout=settings.llm_request_timeout_s)
 
     @staticmethod
     @lru_cache(maxsize=1)
@@ -228,7 +230,7 @@ class LLMRouter:
             api_key=settings.anthropic_api_key, timeout=settings.llm_request_timeout_s
         )
 
-    # ── core call ─────────────────────────────────────────────
+    # -- core call ------------------------------
 
     def complete(
         self,
@@ -274,7 +276,7 @@ class LLMRouter:
             text, in_tok, out_tok = _paced_call(provider, model, price_tier)
         except Exception as exc:
             # Daily-quota exhaustion on the smart Groq model cannot be waited
-            # out within a run — degrade to the fast model (separate, much
+            # out within a run - degrade to the fast model (separate, much
             # larger daily quota) rather than losing the report prose.
             can_fall_back = (
                 provider == "groq"
@@ -331,23 +333,49 @@ class LLMRouter:
     ) -> tuple[str, int, int]:
         from groq import Groq
 
-        client = self._groq_client()
-        assert isinstance(client, Groq)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            response_format={"type": "json_object"} if json_mode else None,
-        )
-        text = response.choices[0].message.content or ""
-        usage = response.usage
-        in_tok = usage.prompt_tokens if usage else _approx_tokens(system + user)
-        out_tok = usage.completion_tokens if usage else _approx_tokens(text)
-        return text, in_tok, out_tok
+        global _groq_key_index
+        keys = settings.groq_api_keys
+        last_quota_error: BaseException | None = None
+        with _groq_key_lock:
+            start_index = _groq_key_index % len(keys)
+
+        for offset in range(len(keys)):
+            key_index = (start_index + offset) % len(keys)
+            client = self._groq_client(keys[key_index])
+            assert isinstance(client, Groq)
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_format={"type": "json_object"} if json_mode else None,
+                )
+            except Exception as exc:
+                if not _is_quota_exhausted(exc) or offset == len(keys) - 1:
+                    raise
+                last_quota_error = exc
+                with _groq_key_lock:
+                    if _groq_key_index % len(keys) == key_index:
+                        _groq_key_index = (key_index + 1) % len(keys)
+                log.warning(
+                    "groq_api_key_quota_exhausted_trying_next",
+                    key_index=key_index + 1,
+                    next_key_index=((key_index + 1) % len(keys)) + 1,
+                    error=str(exc)[:200],
+                )
+                continue
+            text = response.choices[0].message.content or ""
+            usage = response.usage
+            in_tok = usage.prompt_tokens if usage else _approx_tokens(system + user)
+            out_tok = usage.completion_tokens if usage else _approx_tokens(text)
+            return text, in_tok, out_tok
+
+        assert last_quota_error is not None
+        raise last_quota_error
 
     def _call_anthropic(
         self, model: str, system: str, user: str, max_tokens: int, temperature: float
@@ -369,7 +397,7 @@ class LLMRouter:
         )
         return text, response.usage.input_tokens, response.usage.output_tokens
 
-    # ── structured output ─────────────────────────────────────
+    # -- structured output -------------------------
 
     def complete_json(
         self,

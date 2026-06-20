@@ -51,8 +51,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── LLM providers ──────────────────────────────────────────
+    # ---- LLM providers ------------------------------------------------------------------------------------
     groq_api_key: str = ""
+    groq_api_key_2: str = ""
+    groq_api_key_3: str = ""
     groq_model_fast: str = "llama-3.1-8b-instant"
     groq_model_smart: str = "llama-3.3-70b-versatile"
     anthropic_api_key: str = ""
@@ -69,28 +71,28 @@ class Settings(BaseSettings):
     groq_tpm_fast: int = Field(default=18_000, ge=0)   # 8b-instant: real limit 20k
     groq_tpm_smart: int = Field(default=5_500, ge=0)   # 70b: real limit 6k
 
-    # ── Embeddings ─────────────────────────────────────────────
+    # ---- Embeddings ------------------------------------------------------------------------------------------
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_device: str = "cpu"
     hf_hub_offline: bool = False  # set True in .env once model is cached locally
     preload_embeddings: bool = False
 
-    # ── Vector DB ──────────────────────────────────────────────
+    # ---- Vector DB --------------------------------------------------------------------------------------------
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "equityscope_filings"
     qdrant_local_path: Path = Path("data/qdrant")
 
-    # ── Storage ────────────────────────────────────────────────
+    # ---- Storage ------------------------------------------------------------------------------------------------
     postgres_dsn: str = "postgresql://equityscope:equityscope@localhost:5432/equityscope"
     redis_url: str = "redis://localhost:6379/0"
     runtime_storage: Literal["local", "external"] = "local"
 
-    # ── Data sources ───────────────────────────────────────────
+    # ---- Data sources --------------------------------------------------------------------------------------
     edgar_user_agent: str = ""
     fred_api_key: str = ""
     news_rss_enabled: bool = True
 
-    # ── Pipeline tuning ────────────────────────────────────────
+    # ---- Pipeline tuning --------------------------------------------------------------------------------
     chunk_max_tokens: int = Field(default=800, gt=0)
     chunk_overlap_tokens: int = Field(default=100, ge=0)
     retrieval_top_k: int = Field(default=12, gt=0)
@@ -103,7 +105,7 @@ class Settings(BaseSettings):
     filings_lookback_8k_months: int = Field(default=12, gt=0)
     filings_num_10q: int = Field(default=4, ge=0)
 
-    # ── App ────────────────────────────────────────────────────
+    # ---- App --------------------------------------------------------------------------------------------------------
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     frontend_port: int = 8501
@@ -112,12 +114,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     environment: Literal["development", "production"] = "development"
 
-    # ── Observability (optional) ───────────────────────────────
+    # ---- Observability (optional) --------------------------------------------------------------
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    # ── Cost table (USD per 1M tokens) ─────────────────────────
+    # ---- Cost table (USD per 1M tokens) --------------------------------------------------
     cost_groq_fast_in: float = 0.05
     cost_groq_fast_out: float = 0.08
     cost_groq_smart_in: float = 0.59
@@ -125,7 +127,7 @@ class Settings(BaseSettings):
     cost_anthropic_in: float = 3.00
     cost_anthropic_out: float = 15.00
 
-    # ── Paths (derived, not env-driven) ────────────────────────
+    # ---- Paths (derived, not env-driven) ------------------------------------------------
     filings_cache_dir: Path = Path("data/filings")
 
     # SEC EDGAR hard limit is 10 req/s; we stay at it, never above.
@@ -150,7 +152,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_required(self) -> Settings:
         missing: list[str] = []
-        if not self.groq_api_key.strip():
+        if not self.groq_api_keys:
             missing.append("GROQ_API_KEY")
         if not self.edgar_user_agent.strip():
             missing.append("EDGAR_USER_AGENT")
@@ -167,6 +169,15 @@ class Settings(BaseSettings):
             ]
             raise ValueError("\n".join(lines))
         return self
+
+    @property
+    def groq_api_keys(self) -> tuple[str, ...]:
+        keys = (
+            self.groq_api_key.strip(),
+            self.groq_api_key_2.strip(),
+            self.groq_api_key_3.strip(),
+        )
+        return tuple(dict.fromkeys(key for key in keys if key))
 
     def model_price_per_million(self, provider: str, model_tier: str) -> tuple[float, float]:
         """Return (input, output) USD price per 1M tokens for a routed model."""
