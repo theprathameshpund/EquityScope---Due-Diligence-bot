@@ -1,4 +1,4 @@
-﻿"""LangGraph supervisor: graph definition, routing, budget, progress events.
+"""LangGraph supervisor: graph definition, routing, budget, progress events.
 
 Topology:
     ingest_check → [filings, market, news] in parallel → analyst → writer
@@ -45,7 +45,7 @@ EVENTS_LIST = "equityscope:eventlog:{run_id}"
 RUN_KEY = "equityscope:run:{run_id}"
 RUN_TTL_S = 7 * 24 * 3600
 
-REPORTS_DIR = Path("data/reports")
+REPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "reports"
 
 _memory_lock = Lock()
 _memory_run_status: dict[str, dict[str, Any]] = {}

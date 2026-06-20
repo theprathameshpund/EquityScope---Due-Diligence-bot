@@ -1,4 +1,4 @@
-﻿"""API routes: report creation, status, SSE progress stream."""
+"""API routes: report creation, status, SSE progress stream."""
 
 from __future__ import annotations
 
@@ -45,6 +45,52 @@ RATE_LIMIT_WINDOW_S = 3600
 _request_log: dict[str, deque[float]] = defaultdict(deque)
 
 
+def _company_label_from_report(report: dict[str, object]) -> str:
+    company = report.get("company")
+    if not isinstance(company, dict):
+        return str(company or "")
+    ticker = str(company.get("ticker") or "").strip()
+    name = str(company.get("name") or "").strip()
+    if ticker and name:
+        return f"{ticker} - {name}"
+    return ticker or name
+
+
+def _run_summary_from_saved_report(path: object) -> RunSummary | None:
+    try:
+        from pathlib import Path
+
+        report_path = Path(path)
+        raw = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        run_id = str(metadata.get("run_id") or report_path.stem)
+        updated_at = str(metadata.get("generated_at") or report_path.stat().st_mtime)
+        return RunSummary(
+            run_id=run_id,
+            status="done",
+            company=_company_label_from_report(raw),
+            updated_at=updated_at,
+            cost_usd=metadata.get("cost_usd"),
+            tokens_used=metadata.get("tokens_used"),
+        )
+    except Exception as exc:
+        log.warning("saved_report_summary_failed", path=str(path), error=str(exc))
+        return None
+
+
+def _saved_report_summaries() -> list[RunSummary]:
+    if not REPORTS_DIR.exists():
+        return []
+    runs: list[RunSummary] = []
+    for path in REPORTS_DIR.glob("*.json"):
+        summary = _run_summary_from_saved_report(path)
+        if summary is not None:
+            runs.append(summary)
+    return runs
+
+
 def _check_rate_limit(client_ip: str) -> None:
     if settings.environment != "production":
         return
@@ -87,44 +133,26 @@ async def create_report(
 async def list_reports() -> RunListResponse:
     """Recent runs (newest first) so the UI can reopen past reports."""
     if settings.runtime_storage == "local":
-        # Prefer in-memory recent runs, but if none exist (e.g. after a restart),
-        # fall back to reading saved reports from disk so the UI shows recent runs.
-        runs: list[RunSummary] = []
-        mem = list_memory_run_statuses()
-        if mem:
-            runs = [
-                RunSummary(
-                    run_id=str(data.get("run_id", "")),
-                    status=str(data.get("status", "unknown")),
-                    company=str(data.get("company", "")),
-                    updated_at=str(data.get("updated_at", "")),
-                    cost_usd=((data.get("report") or {}).get("metadata") or {}).get("cost_usd"),
-                    tokens_used=((data.get("report") or {}).get("metadata") or {}).get("tokens_used"),
-                )
-                for data in mem
-            ]
-        else:
-            # No in-memory runs — scan REPORTS_DIR for saved JSON reports.
-            try:
-                from app.agents.orchestrator import REPORTS_DIR
-
-                for path in sorted(REPORTS_DIR.glob('*.json'), reverse=True):
-                    try:
-                        raw = json.loads(path.read_text(encoding='utf-8'))
-                    except Exception:
-                        continue
-                    runs.append(
-                        RunSummary(
-                            run_id=str(raw.get('metadata', {}).get('run_id', path.stem)),
-                            status=str(raw.get('metadata', {}).get('status', 'done')),
-                            company=str(raw.get('company', '') or raw.get('metadata', {}).get('company', '')),
-                            updated_at=str(raw.get('metadata', {}).get('updated_at', '')),
-                            cost_usd=raw.get('metadata', {}).get('cost_usd'),
-                            tokens_used=raw.get('metadata', {}).get('tokens_used'),
-                        )
-                    )
-            except Exception as exc:
-                log.warning('reports_dir_scan_failed', error=str(exc))
+        # Merge persisted reports with in-memory statuses. The previous code
+        # returned only memory when one current-session run existed, hiding all
+        # saved reports from data/reports.
+        by_id: dict[str, RunSummary] = {
+            run.run_id: run for run in _saved_report_summaries()
+        }
+        for data in list_memory_run_statuses():
+            metadata = (data.get("report") or {}).get("metadata") or {}
+            run_id = str(data.get("run_id", ""))
+            if not run_id:
+                continue
+            by_id[run_id] = RunSummary(
+                run_id=run_id,
+                status=str(data.get("status", "unknown")),
+                company=str(data.get("company", "")) or by_id.get(run_id, RunSummary(run_id=run_id, status="unknown")).company,
+                updated_at=str(data.get("updated_at", "")) or by_id.get(run_id, RunSummary(run_id=run_id, status="unknown")).updated_at,
+                cost_usd=metadata.get("cost_usd", by_id.get(run_id).cost_usd if run_id in by_id else None),
+                tokens_used=metadata.get("tokens_used", by_id.get(run_id).tokens_used if run_id in by_id else None),
+            )
+        runs = list(by_id.values())
         runs.sort(key=lambda r: r.updated_at, reverse=True)
         return RunListResponse(runs=runs[:50])
 
