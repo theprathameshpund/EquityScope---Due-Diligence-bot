@@ -1,4 +1,4 @@
-﻿import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 
 import {
   Claim,
@@ -407,7 +407,7 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
           <button class="btn btn-ghost" (click)="download('md')">
             <app-icon name="download" [size]="14" /> Markdown
           </button>
-          <button class="btn btn-ghost" (click)="openHtmlPreview()">
+          <button class="btn btn-ghost" (click)="downloadHtml()">
             <app-icon name="download" [size]="14" /> HTML
           </button>
           <button class="btn btn-ghost" (click)="download('json')">
@@ -881,80 +881,140 @@ export class ReportViewComponent {
     return metric.unit === 'bps' && metric.value < 0;
   }
 
-  openHtmlPreview(): void {
+  downloadHtml(): void {
     const data = this.data();
-    const reportRoot = document.querySelector('app-report-view');
-    if (!reportRoot) {
-      return;
+    const blob = new Blob([this.buildStandaloneHtml(data)], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `equityscope_${data.run_id}.html`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private buildStandaloneHtml(data: ReportStatus): string {
+    const report = data.report;
+    if (!report) {
+      return '<!doctype html><html><body><p>No report available.</p></body></html>';
     }
 
-    const clone = reportRoot.cloneNode(true) as HTMLElement;
-    const newWindow = window.open('', '_blank');
-    if (!newWindow) {
-      return;
-    }
-
-    const styleElements = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
-      .map((node) => node.outerHTML)
-      .join('\n');
-
-    const title = `Report: ${data.company} (${data.run_id})`;
-    const theme = document.documentElement.dataset['theme'] ?? 'light';
-
-    // Inject the app styles plus a dedicated export stylesheet for nicer formatting
-    const exportCssLink = '<link rel="stylesheet" href="/assets/report-export.css">';
-    newWindow.document.write(`<!doctype html>
-      <html lang="en">
-        <head>
-          <meta charset="utf-8" />
-          <title>${title}</title>
-          ${styleElements}
-          ${exportCssLink}
-        </head>
-        <body data-theme="${theme}">
-          <div class="preview-toolbar">
-            <button id="downloadJson">Download JSON</button>
-            <button id="downloadHtml">Download HTML</button>
+    const esc = (value: unknown): string => this.escapeHtml(String(value ?? ''));
+    const list = (items: string[]): string =>
+      items.length ? `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p class="muted">Data unavailable or unverifiable.</p>';
+    const claims = (items: Claim[]): string =>
+      items.length
+        ? `<ul class="claim-list">${items.map((claim) => `<li>${esc(claim.text)}${this.sourceBadges(claim)}</li>`).join('')}</ul>`
+        : '<p class="muted">Data unavailable or unverifiable.</p>';
+    const metrics = report.financial_health.table.metrics
+      .map((metric) => `<tr><td>${esc(metric.name)}</td><td class="num">${esc(this.formatMetric(metric))}</td><td>${esc(metric.period)}</td></tr>`)
+      .join('');
+    const valuationRows = this.valuationTiles()
+      .map((item) => `<tr><td>${esc(item.label)}</td><td class="num">${esc(item.value)}</td></tr>`)
+      .join('');
+    const risks = report.risk_matrix
+      .map((risk) => `
+        <article class="risk risk-${esc(risk.severity)}">
+          <div class="risk-title">
+            <h3>${esc(risk.title)}</h3>
+            <span>${esc(risk.severity)} impact</span><span>${esc(risk.likelihood)} probability</span>
           </div>
-          <div id="report-root" class="container"></div>
-        </body>
-      </html>`);
+          ${claims(risk.claims)}
+          <p><strong>Mitigation:</strong> ${esc(risk.mitigation)}</p>
+          <p><strong>Monitoring metrics:</strong> ${esc((risk.monitoring_metrics ?? []).join('; ') || 'Data unavailable or unverifiable.')}</p>
+        </article>`)
+      .join('');
+    const scoreRows = Object.entries(report.quality_checks.final_scorecard ?? {})
+      .map(([key, value]) => `<tr><td>${esc(key)}</td><td class="num">${esc(value)}</td></tr>`)
+      .join('');
 
-    const reportContainer = newWindow.document.getElementById('report-root');
-    if (reportContainer) {
-      reportContainer.appendChild(clone);
-    }
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(report.company.name)} Due Diligence Report</title>
+  <style>
+    :root { color-scheme: light; --ink:#111827; --muted:#667085; --line:#d9e2ef; --soft:#f6f8fb; --brand:#163b73; --gold:#b88900; --green:#0f766e; --amber:#a16207; --red:#b42318; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef2f7; color: var(--ink); font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial, sans-serif; }
+    .page { max-width: 1040px; margin: 28px auto; background: #fff; padding: 48px 56px; box-shadow: 0 24px 70px rgba(15,23,42,.12); }
+    header { border-bottom: 3px solid var(--brand); padding-bottom: 22px; margin-bottom: 28px; }
+    .eyebrow { color: var(--gold); font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 34px; line-height: 1.12; margin: 8px 0; }
+    .subtitle { color: var(--muted); }
+    .decision { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin: 24px 0 30px; }
+    .card { border: 1px solid var(--line); background: var(--soft); padding: 14px 16px; border-radius: 6px; }
+    .card label { display:block; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .card b { display:block; font-size: 18px; margin-top: 4px; }
+    section { break-inside: avoid; margin-top: 30px; }
+    h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 21px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin: 0 0 12px; }
+    h3 { margin: 0 0 8px; font-size: 15px; }
+    ul { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 6px 0; }
+    .claim-list { list-style: none; margin-left: 0; }
+    .claim-list li { border-left: 3px solid var(--brand); background: #fbfdff; padding: 9px 12px; border-radius: 4px; }
+    .sources { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; background: var(--soft); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .risk { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 14px; margin-bottom: 12px; }
+    .risk-high { border-left-color: var(--red); } .risk-medium { border-left-color: var(--amber); } .risk-low { border-left-color: var(--green); }
+    .risk-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .risk-title span { border:1px solid var(--line); border-radius:999px; padding:2px 8px; color:var(--muted); font-size:11px; text-transform:capitalize; }
+    .muted { color: var(--muted); }
+    footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    @media print { body { background:#fff; } .page { box-shadow:none; margin:0; padding: 24px; max-width: none; } }
+    @media (max-width: 760px) { .page { margin:0; padding:28px 22px; } .decision, .grid-2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">Institutional Due Diligence Report</div>
+      <h1>${esc(report.company.name)} (${esc(report.company.ticker)})</h1>
+      <div class="subtitle">CIK ${esc(report.company.cik)} | ${esc(report.company.sector || 'Sector unavailable')} | Generated ${esc(this.formatDate(report.metadata.generated_at))}</div>
+    </header>
 
-    const downloadJsonButton = newWindow.document.getElementById('downloadJson');
-    const downloadHtmlButton = newWindow.document.getElementById('downloadHtml');
+    <div class="decision">
+      <div class="card"><label>Rating</label><b>${esc(report.institutional_summary.investment_rating)}</b></div>
+      <div class="card"><label>Confidence</label><b>${esc(report.institutional_summary.confidence_score)}/100</b></div>
+      <div class="card"><label>Horizon</label><b>${esc(report.institutional_summary.investment_horizon)}</b></div>
+      <div class="card"><label>Expected Return</label><b>${esc(report.institutional_summary.expected_return_range)}</b></div>
+    </div>
 
-    downloadJsonButton?.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(data.report ?? {}, null, 2)], {
-        type: 'application/json',
-      });
-      const anchor = newWindow.document.createElement('a');
-      anchor.href = URL.createObjectURL(blob);
-      anchor.download = `equityscope_${data.run_id}.json`;
-      newWindow.document.body.appendChild(anchor);
-      anchor.click();
-      URL.revokeObjectURL(anchor.href);
-      anchor.remove();
-    });
+    <section><h2>Executive Summary</h2>${claims(report.executive_summary)}</section>
+    <section class="grid-2"><div><h2>Key Bull Thesis</h2>${list(report.institutional_summary.key_bull_thesis)}</div><div><h2>Key Bear Thesis</h2>${list(report.institutional_summary.key_bear_thesis)}</div></section>
+    <section class="grid-2"><div><h2>Top Catalysts</h2>${list(report.institutional_summary.top_catalysts)}</div><div><h2>Top Risks</h2>${list(report.institutional_summary.top_risks)}</div></section>
+    <section><h2>Business Overview</h2>${claims(report.business_overview)}</section>
+    <section><h2>Financial Analysis</h2><table><thead><tr><th>Metric</th><th class="num">Value</th><th>Period</th></tr></thead><tbody>${metrics}</tbody></table>${claims(report.financial_health.commentary)}</section>
+    <section><h2>Valuation</h2><table><tbody>${valuationRows || '<tr><td>Data unavailable or unverifiable.</td><td></td></tr>'}</tbody></table>${claims(report.valuation.commentary)}</section>
+    <section><h2>Earnings Quality</h2><p><strong>Quality label:</strong> ${esc(report.earnings_quality.quality_label || 'Data unavailable or unverifiable.')}</p>${claims(report.earnings_quality.commentary)}${list(report.earnings_quality.flags)}</section>
+    <section><h2>Risk Matrix</h2>${risks || '<p class="muted">Data unavailable or unverifiable.</p>'}</section>
+    <section><h2>Recent Developments</h2>${claims(report.recent_developments)}</section>
+    <section><h2>Red Flags</h2>${claims(report.red_flags)}</section>
+    <section><h2>Investment Thesis</h2><div class="grid-2"><div><h3>Bull Case</h3>${list(report.investment_thesis.bull_case)}</div><div><h3>Bear Case</h3>${list(report.investment_thesis.bear_case)}</div></div><p><strong>Probability-weighted outcome:</strong> ${esc(report.investment_thesis.probability_weighted_outcome)}</p></section>
+    <section><h2>Management Questions</h2>${list(report.management_questions)}</section>
+    <section><h2>Data Gaps and Quality Checks</h2>${list(report.data_gaps)}<p>${esc(report.quality_checks.claim_verification)}</p><table><tbody>${scoreRows}</tbody></table></section>
+    <footer>Free-source policy: ${esc(report.quality_checks.source_policy )} | Run ${esc(report.metadata.run_id )} | ${esc(report.metadata.tokens_used.toLocaleString())} tokens | $${esc(report.metadata.cost_usd.toFixed(4))}</footer>
+  </main>
+</body>
+</html>`;
+  }
 
-    downloadHtmlButton?.addEventListener('click', () => {
-      const blob = new Blob([newWindow.document.documentElement.outerHTML], {
-        type: 'text/html',
-      });
-      const anchor = newWindow.document.createElement('a');
-      anchor.href = URL.createObjectURL(blob);
-      anchor.download = `equityscope_${data.run_id}.html`;
-      newWindow.document.body.appendChild(anchor);
-      anchor.click();
-      URL.revokeObjectURL(anchor.href);
-      anchor.remove();
-    });
+  private sourceBadges(claim: Claim): string {
+    const sources = [...claim.citation_chunk_ids, ...claim.metric_ids];
+    return sources.length ? `<span class="sources">Sources: ${sources.map((source) => this.escapeHtml(source)).join(', ')}</span>` : '';
+  }
 
-    newWindow.document.close();
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   download(kind: 'md' | 'json'): void {
@@ -972,3 +1032,4 @@ export class ReportViewComponent {
     URL.revokeObjectURL(url);
   }
 }
+

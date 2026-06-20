@@ -1,4 +1,4 @@
-/** API contracts — mirror src/api/schemas.py and src/report/schema.py. */
+﻿/** API contracts â€” mirror src/api/schemas.py and src/report/schema.py. */
 
 export interface CreateReportResponse {
   run_id: string;
@@ -38,6 +38,8 @@ export interface RiskEntry {
   title: string;
   severity: 'low' | 'medium' | 'high';
   likelihood: 'low' | 'medium' | 'high';
+  mitigation: string;
+  monitoring_metrics: string[];
   claims: Claim[];
 }
 
@@ -232,3 +234,4 @@ export interface Health {
   postgres: boolean;
   redis: boolean;
 }
+
