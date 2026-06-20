@@ -1,4 +1,4 @@
-﻿"""Config validation: fail-fast with helpful messages, cost table."""
+"""Config validation: fail-fast with helpful messages, cost table."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from app.config import Settings
 
 
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("GROQ_API_KEY", "EDGAR_USER_AGENT", "ANTHROPIC_API_KEY",
+    for var in ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3", "EDGAR_USER_AGENT", "ANTHROPIC_API_KEY",
                 "LLM_WRITER_PROVIDER"):
         monkeypatch.delenv(var, raising=False)
 
@@ -53,13 +53,25 @@ def test_inline_env_comments_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
         _env_file=None,
         groq_api_key="x",
         edgar_user_agent="Test test@example.com",
-        fred_api_key="# optional — macro context section skipped if empty",
+        fred_api_key="# optional - macro context section skipped if empty",
         news_rss_enabled="true            # Google News RSS, no key needed",  # type: ignore[arg-type]
     )
     # A value that is only a comment becomes empty; trailing comments are cut.
     assert settings.fred_api_key == ""
     assert settings.news_rss_enabled is True
 
+
+
+def test_groq_api_keys_are_deduplicated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_env(monkeypatch)
+    settings = Settings(
+        _env_file=None,
+        groq_api_key="x",
+        groq_api_key_2="y",
+        groq_api_key_3="x",
+        edgar_user_agent="Test test@example.com",
+    )
+    assert settings.groq_api_keys == ("x", "y")
 
 def test_cost_table_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
