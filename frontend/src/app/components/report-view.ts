@@ -286,7 +286,7 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
 
       <section id="sec-risk">
         <h3><span class="no">{{ sectionNo('sec-risk') }}</span> Risk matrix</h3>
-        @if (!report.risk_matrix.length) { <p class="note">No risks identified.</p> }
+        @if (!report.risk_matrix.length) { <p class="note">Insufficient data for this section: risk matrix requires at least two verified or structural risks.</p> }
         <div class="risk-grid">
           @for (risk of report.risk_matrix; track risk.title) {
             <div class="risk sev-{{ risk.severity }}">
@@ -316,7 +316,7 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
         <section id="sec-flags">
           <h3><span class="no">{{ sectionNo('sec-flags') }}</span> Red flags</h3>
           @if (!report.red_flags.length) {
-            <p class="note">No red flags surfaced by this run.</p>
+            <p class="note">No material red flags identified based on available data.</p>
           }
           @for (flag of report.red_flags; track flag.claim_id) {
             <div class="flag-band">
