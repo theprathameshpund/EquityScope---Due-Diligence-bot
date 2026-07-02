@@ -12,12 +12,14 @@ CLI:  python -m app.agents.orchestrator AAPL "competition risk"
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -35,6 +37,7 @@ from app.logging_setup import bind_run_id, get_logger
 from app.memory.checkpoints import get_checkpointer
 from app.rag.ingestion import ingest_company
 from app.report.render import render_markdown
+from app.report.qa import run_final_report_qa
 from app.report.schema import CompanyMeta, DDReport, ReportMetadata
 from app.state import AgentState, ProgressEvent, RetrievedEvidence, RunBudget, new_id
 
@@ -46,6 +49,29 @@ RUN_KEY = "equityscope:run:{run_id}"
 RUN_TTL_S = 7 * 24 * 3600
 
 REPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "reports"
+
+_ERROR_LEAK_PATTERNS = (
+    re.compile(r"Error code:\s*\d+", re.I),
+    re.compile(r"Traceback", re.I),
+    re.compile(r"json_validate_failed", re.I),
+    re.compile(r"invalid_request_error", re.I),
+    re.compile(r"HTTP/\d", re.I),
+    re.compile(r"\{['\"]error['\"]", re.I),
+)
+
+
+def _clean_report_message(message: str) -> str:
+    if any(pattern.search(message) for pattern in _ERROR_LEAK_PATTERNS):
+        return "Insufficient free-source data for one or more report sections."
+    return message
+
+
+def _scrub_report_for_output(report: DDReport) -> None:
+    report.data_gaps = list(dict.fromkeys(_clean_report_message(gap) for gap in report.data_gaps))
+    report.metadata.warnings = list(
+        dict.fromkeys(_clean_report_message(warning) for warning in report.metadata.warnings)
+    )
+
 
 _memory_lock = Lock()
 _memory_run_status: dict[str, dict[str, Any]] = {}
@@ -208,7 +234,7 @@ def finalize_node(state: AgentState) -> dict[str, Any]:
             "report may be partial."
         )
 
-    report.data_gaps = list(dict.fromkeys([*state.data_gaps, *new_gaps]))
+    report.data_gaps = list(dict.fromkeys(_clean_report_message(gap) for gap in [*state.data_gaps, *new_gaps]))
     report.metadata = ReportMetadata(
         run_id=state.run_id,
         duration_s=round(duration, 1),
@@ -223,8 +249,10 @@ def finalize_node(state: AgentState) -> dict[str, Any]:
             "embeddings": settings.embedding_model,
             "nli": settings.critic_nli_model,
         },
-        warnings=warnings,
+        warnings=[_clean_report_message(warning) for warning in warnings],
     )
+    _scrub_report_for_output(report)
+    run_final_report_qa(report, state, log)
 
     budget = RunBudget(
         token_limit=tracker.token_limit,
@@ -255,12 +283,26 @@ def _with_events(
 ) -> Callable[..., dict[str, Any]]:
     def wrapped(state: AgentState) -> dict[str, Any]:
         bind_run_id(state.run_id)
+        started = perf_counter()
+        log.info("graph_node_start", node=name)
         publish_event(state.run_id, name, "start")
         try:
             updates = fn(state)
         except Exception as exc:
+            log.error(
+                "graph_node_error",
+                node=name,
+                seconds=round(perf_counter() - started, 2),
+                error=str(exc),
+            )
             publish_event(state.run_id, name, "error", message=str(exc)[:300])
             raise
+        log.info(
+            "graph_node_end",
+            node=name,
+            seconds=round(perf_counter() - started, 2),
+            update_keys=sorted(updates.keys()),
+        )
         publish_event(state.run_id, name, "end")
         return updates
 
@@ -308,12 +350,16 @@ def run_report(
     rid = run_id or new_id("run")
     bind_run_id(rid)
     get_tracker(rid)  # initialize the budget tracker for this run
+    run_started = perf_counter()
+    log.info("run_report_start", run_id=rid, company=company, resume=resume)
     store_run_status(rid, "running", company=company)
     publish_event(rid, "run", "start", message=f"Run started for {company}")
 
     try:
         with get_checkpointer() as checkpointer:
+            log.info("graph_compile_start", run_id=rid)
             graph = build_graph(checkpointer)
+            log.info("graph_compile_end", run_id=rid)
             config = {"configurable": {"thread_id": rid}}
             graph_input: AgentState | None = None
             if not resume:
@@ -323,9 +369,11 @@ def run_report(
                     focus=focus,
                     budget=RunBudget(token_limit=settings.run_token_budget),
                 )
+            log.info("graph_invoke_start", run_id=rid)
             final: dict[str, Any] = graph.invoke(graph_input, config)
+            log.info("graph_invoke_end", run_id=rid, seconds=round(perf_counter() - run_started, 2))
     except Exception as exc:
-        log.error("run_failed", error=str(exc))
+        log.error("run_failed", run_id=rid, seconds=round(perf_counter() - run_started, 2), error=str(exc))
         store_run_status(rid, "failed", company=company, error=str(exc))
         publish_event(rid, "run", "error", message=str(exc)[:300])
         raise
@@ -335,6 +383,7 @@ def run_report(
     evidence = [e for e in final.get("evidence", []) if isinstance(e, RetrievedEvidence)]
     store_run_status(rid, "done", company=company, report=report, evidence=evidence)
     publish_event(rid, "run", "done", message="Report ready")
+    log.info("run_report_done", run_id=rid, seconds=round(perf_counter() - run_started, 2))
     return rid, report
 
 

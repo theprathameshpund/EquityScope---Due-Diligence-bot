@@ -34,6 +34,38 @@ class _Peers(BaseModel):
     tickers: list[str] = Field(min_length=1, max_length=5)
 
 
+PEER_FALLBACKS: dict[str, list[str]] = {
+    "AMZN": ["WMT", "COST", "TGT", "EBAY", "BABA"],
+    "WMT": ["COST", "TGT", "AMZN", "DG", "KR"],
+    "MSFT": ["AAPL", "GOOGL", "ORCL", "CRM", "ADBE"],
+    "GOOGL": ["META", "MSFT", "AMZN", "AAPL", "SNAP"],
+    "META": ["GOOGL", "SNAP", "PINS", "MSFT", "AMZN"],
+    "AAPL": ["MSFT", "GOOGL", "DELL", "HPQ", "SONY"],
+    "TSLA": ["GM", "F", "TM", "RIVN", "NIO"],
+    "NVDA": ["AMD", "INTC", "AVGO", "QCOM", "TSM"],
+}
+
+
+def _fallback_peers(state: AgentState) -> list[str]:
+    ticker = state.ticker.upper()
+    if ticker in PEER_FALLBACKS:
+        return PEER_FALLBACKS[ticker]
+    sector = (state.market.sector if state.market else "").lower()
+    if "technology" in sector:
+        return ["MSFT", "AAPL", "GOOGL", "ORCL", "ADBE"]
+    if "consumer defensive" in sector or "consumer staples" in sector:
+        return ["WMT", "COST", "TGT", "KR", "DG"]
+    if "consumer cyclical" in sector or "retail" in sector:
+        return ["AMZN", "WMT", "COST", "TGT", "EBAY"]
+    if "communication" in sector:
+        return ["GOOGL", "META", "NFLX", "DIS", "SNAP"]
+    if "health" in sector:
+        return ["JNJ", "PFE", "MRK", "ABBV", "LLY"]
+    if "financial" in sector:
+        return ["JPM", "BAC", "WFC", "GS", "MS"]
+    return ["MSFT", "AAPL", "AMZN", "GOOGL", "JPM"]
+
+
 def _suggest_peers(router: LLMRouter, state: AgentState) -> list[str]:
     system = load_prompt("peer_suggest").format(
         company=state.company_name, ticker=state.ticker
@@ -42,10 +74,12 @@ def _suggest_peers(router: LLMRouter, state: AgentState) -> list[str]:
         result = router.complete_json(
             "fast", system, "List the 3-5 peer tickers.", _Peers, max_tokens=80
         )
-    except ValueError:
-        return []
+    except Exception as exc:
+        log.warning("peer_suggest_failed_using_fallback", ticker=state.ticker, error=str(exc)[:200])
+        return [t for t in _fallback_peers(state) if t != state.ticker.upper()][:5]
     cleaned = [t.strip().upper() for t in result.tickers if t.strip()]
-    return [t for t in cleaned if t != state.ticker.upper()][:5]
+    peers = [t for t in cleaned if t != state.ticker.upper()][:5]
+    return peers or [t for t in _fallback_peers(state) if t != state.ticker.upper()][:5]
 
 
 def _compute_scorecard(
@@ -218,12 +252,20 @@ def market_node(state: AgentState) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     data_gaps: list[str] = []
 
+    log.info("market_node_start", ticker=state.ticker)
     try:
+        log.info("market_snapshot_start", ticker=state.ticker)
         snapshot = get_snapshot(state.ticker)
+        log.info("market_snapshot_end", ticker=state.ticker, available=snapshot.available)
+        log.info("market_peers_start", ticker=state.ticker)
         snapshot.peers = get_peer_multiples(_suggest_peers(router, state))
+        log.info("market_peers_end", ticker=state.ticker, peers=len(snapshot.peers))
+        log.info("market_macro_start")
         snapshot.macro_notes = get_macro_notes()
+        log.info("market_macro_end", notes=len(snapshot.macro_notes))
 
         try:
+            log.info("market_summary_start", ticker=state.ticker)
             data = snapshot.model_dump(mode="json", exclude={"summary", "available", "error"})
             response = router.complete(
                 "fast",
@@ -232,6 +274,7 @@ def market_node(state: AgentState) -> dict[str, Any]:
                 max_tokens=200,
             )
             snapshot.summary = response.text.strip()
+            log.info("market_summary_end", ticker=state.ticker, chars=len(snapshot.summary))
         except Exception as exc:
             log.warning("market_summary_failed", error=str(exc))
 
@@ -244,7 +287,9 @@ def market_node(state: AgentState) -> dict[str, Any]:
 
     # Insider activity (best effort)
     try:
+        log.info("insider_activity_start", ticker=state.ticker)
         insider = get_insider_activity(state.ticker)
+        log.info("insider_activity_end", ticker=state.ticker, available=insider.available)
         updates["insider_activity"] = insider
         if not insider.available:
             data_gaps.append(f"Insider activity unavailable: {insider.error}")
@@ -255,12 +300,15 @@ def market_node(state: AgentState) -> dict[str, Any]:
     # Investment scorecard (computed after analysis is done — we'll recompute
     # in analyst_agent if analysis is not yet available, but compute here
     # with market data only for immediate use)
+    log.info("scorecard_compute_start", ticker=state.ticker)
     scorecard = _compute_scorecard(
         snapshot if snapshot.available else None,
         state.analysis,  # may be None at this point; analyst_agent will recompute
     )
     updates["scorecard"] = scorecard
+    log.info("scorecard_compute_end", ticker=state.ticker, available=scorecard.available)
 
     if data_gaps:
         updates["data_gaps"] = data_gaps
+    log.info("market_node_end", ticker=state.ticker, data_gaps=len(data_gaps))
     return updates

@@ -24,13 +24,17 @@ class _Sentiments(BaseModel):
 
 def news_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node: fetch + sanitize + classify news; degrade gracefully."""
+    log.info("news_node_start", ticker=state.ticker, company=state.company_name)
     if not settings.news_rss_enabled:
+        log.info("news_disabled")
         return {
             "news": NewsDigest(available=False, error="News RSS disabled by configuration."),
             "data_gaps": ["News disabled (NEWS_RSS_ENABLED=false)."],
         }
     try:
+        log.info("news_fetch_start", ticker=state.ticker)
         items = fetch_news(state.company_name, state.ticker)
+        log.info("news_fetch_end", ticker=state.ticker, items=len(items))
     except Exception as exc:
         log.warning("news_unavailable", error=str(exc))
         return {
@@ -39,12 +43,15 @@ def news_node(state: AgentState) -> dict[str, Any]:
         }
 
     # Untrusted web text never reaches a prompt unsanitized.
+    log.info("news_sanitize_start", items=len(items))
     for item in items:
         item.title = sanitize(item.title, source="news_title")
         item.snippet = sanitize(item.snippet, source="news_snippet")
+    log.info("news_sanitize_end", items=len(items))
 
     if items:
         try:
+            log.info("news_sentiment_start", items=len(items))
             router = LLMRouter(state.run_id)
             numbered = "\n".join(
                 f"[{i + 1}] {item.title} — {item.snippet[:200]}"
@@ -59,7 +66,9 @@ def news_node(state: AgentState) -> dict[str, Any]:
                     label = result.labels[i].strip().lower()
                     if label in _VALID_LABELS:
                         item.sentiment = cast("SentimentLabel", label)
+            log.info("news_sentiment_end", items=len(items))
         except Exception as exc:
             log.warning("news_sentiment_failed", error=str(exc))
 
+    log.info("news_node_end", items=len(items))
     return {"news": NewsDigest(available=True, items=items)}

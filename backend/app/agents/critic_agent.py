@@ -213,6 +213,7 @@ def _verify_claim(
 
 def critic_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node: verify every claim in the draft report."""
+    log.info("critic_node_start", has_report=state.report is not None)
     if state.report is None:
         return {"critic_verdicts": [], "status": "critic_skipped"}
 
@@ -221,13 +222,17 @@ def critic_node(state: AgentState) -> dict[str, Any]:
         evidence_by_id[chunk.chunk_id] = chunk
     metrics = state.analysis.metrics if state.analysis else []
 
+    claims = state.report.all_claims()
+    log.info("critic_claims_start", claims=len(claims), evidence=len(evidence_by_id), metrics=len(metrics))
     verdicts: list[CriticVerdict] = []
-    for claim in state.report.all_claims():
+    for index, claim in enumerate(claims, 1):
+        log.info("critic_claim_start", index=index, total=len(claims), claim_id=claim.claim_id)
         verdict = _verify_claim(claim, evidence_by_id, metrics)
         claim.verification_status = (
             "supported" if verdict.verdict == "supported" else "unsupported"
         )
         verdicts.append(verdict)
+        log.info("critic_claim_end", index=index, total=len(claims), claim_id=claim.claim_id, verdict=verdict.verdict)
 
     n_failed = sum(1 for v in verdicts if v.verdict != "supported")
     log.info("critic_done", total=len(verdicts), failed=n_failed,

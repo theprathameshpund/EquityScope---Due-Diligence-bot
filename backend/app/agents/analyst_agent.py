@@ -157,6 +157,22 @@ def _write_commentary(
     return claims
 
 
+def _fallback_management_questions(state: AgentState, analysis: FinancialAnalysis) -> list[str]:
+    company = state.company_name or state.ticker
+    questions = [
+        f"Which factors most affected {company}'s latest revenue growth, margin trend, and cash conversion?",
+        "What actions are being taken to address any margin pressure, cost inflation, or operating leverage weakness?",
+        "How should investors assess liquidity, debt maturities, refinancing needs, and capital allocation over the next 12-24 months?",
+        "Which customer, supplier, geographic, or segment concentrations are most material to revenue quality?",
+        "What legal, regulatory, antitrust, litigation, or disclosed 8-K events could materially affect the outlook?",
+    ]
+    if analysis.anomalies:
+        questions.insert(0, f"What explains the detected anomaly: {analysis.anomalies[0][:120]}?")
+    if state.data_gaps:
+        questions.append("Which unavailable public-data fields should investors request directly from management before underwriting the thesis?")
+    return questions[:8]
+
+
 def _generate_management_questions(
     router: LLMRouter, state: AgentState, analysis: FinancialAnalysis
 ) -> list[str]:
@@ -178,8 +194,8 @@ def _generate_management_questions(
         )
         return [q.strip() for q in result.questions if q.strip()][:8]
     except Exception as exc:
-        log.warning("management_questions_failed", error=str(exc))
-        return []
+        log.warning("management_questions_failed_using_fallback", error=str(exc)[:200])
+        return _fallback_management_questions(state, analysis)
 
 
 def _recompute_scorecard(analysis: FinancialAnalysis, state: AgentState) -> InvestmentScorecard:
@@ -202,12 +218,15 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
     All numbers are deterministic; the LLM only writes commentary referencing
     pre-computed metric IDs.
     """
+    log.info("analyst_node_start", ticker=state.ticker, cik=state.cik)
     data_gaps: list[str] = []
     facts = state.facts
 
     if facts is None:
         try:
+            log.info("financial_facts_fetch_start", cik=state.cik)
             facts = fetch_financial_facts(state.cik)
+            log.info("financial_facts_fetch_end", cik=state.cik)
         except Exception as exc:
             log.warning("xbrl_unavailable", cik=state.cik, error=str(exc))
             data_gaps.append(
@@ -215,7 +234,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
                 f"(CIK {state.cik}): {exc}"
             )
             # Fallback: build from Yahoo Finance (works for ADRs / foreign issuers)
+            log.info("yfinance_fallback_start", ticker=state.ticker)
             facts = _facts_from_yfinance(state.ticker, state.cik)
+            log.info("yfinance_fallback_end", ticker=state.ticker, available=facts is not None)
             if facts is None:
                 data_gaps.append(
                     f"Yahoo Finance financial fallback also returned no data for {state.ticker}. "
@@ -228,7 +249,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
                 "Source: https://finance.yahoo.com/quote/" + state.ticker
             )
 
+    log.info("financial_metrics_compute_start", ticker=state.ticker)
     analysis = compute_metrics(facts)
+    log.info("financial_metrics_compute_end", ticker=state.ticker, metrics=len(analysis.metrics), anomalies=len(analysis.anomalies))
     if not analysis.metrics:
         data_gaps.append(
             "No computable financial metrics found. "
@@ -241,13 +264,17 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
 
     router = LLMRouter(state.run_id)
     try:
+        log.info("analyst_commentary_start", ticker=state.ticker)
         analysis.commentary = _write_commentary(router, state, analysis)
+        log.info("analyst_commentary_end", ticker=state.ticker, chars=len(analysis.commentary))
     except Exception as exc:
         log.warning("analyst_commentary_skipped", error=str(exc))
 
     # Recompute scorecard with full financial metrics now available.
     try:
+        log.info("analyst_scorecard_start", ticker=state.ticker)
         scorecard = _recompute_scorecard(analysis, state)
+        log.info("analyst_scorecard_end", ticker=state.ticker, available=scorecard.available)
     except Exception as exc:
         log.warning("scorecard_recompute_failed", error=str(exc))
         scorecard = state.scorecard  # keep the market-only version
@@ -255,7 +282,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
     # Generate management questions from anomalies + data gaps.
     management_questions: list[str] = []
     try:
+        log.info("management_questions_start", ticker=state.ticker)
         management_questions = _generate_management_questions(router, state, analysis)
+        log.info("management_questions_end", ticker=state.ticker, questions=len(management_questions))
     except Exception as exc:
         log.warning("management_questions_skipped", error=str(exc))
 

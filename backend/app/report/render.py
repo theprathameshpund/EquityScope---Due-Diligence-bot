@@ -43,10 +43,18 @@ def _render_claim(claim: Claim) -> str:
     return f"{claim.text}{suffix}"
 
 
-def _render_section(title: str, claims: list[Claim]) -> list[str]:
+def _section_gap(report: DDReport, title: str) -> str:
+    prefix = f"Insufficient data for this section: {title} -"
+    for gap in report.data_gaps:
+        if gap.startswith(prefix):
+            return gap
+    return f"Insufficient data for this section: {title}."
+
+
+def _render_section(title: str, claims: list[Claim], report: DDReport | None = None) -> list[str]:
     lines = [f"## {title}", ""]
     if not claims:
-        lines.append("_No verified content for this section._")
+        lines.append(_section_gap(report, title) if report is not None else f"Insufficient data for this section: {title}.")
     else:
         lines.extend(f"- {_render_claim(c)}" for c in claims)
     lines.append("")
@@ -108,8 +116,8 @@ def render_markdown(report: DDReport) -> str:
             lines.append(f"| {d['name']} | {d['score']}/5 {bar} | {d['rationale']} |")
         lines.append("")
 
-    lines += _render_section("Executive Summary", report.executive_summary)
-    lines += _render_section("Business Overview", report.business_overview)
+    lines += _render_section("Executive Summary", report.executive_summary, report)
+    lines += _render_section("Business Overview", report.business_overview, report)
 
     for title, section in (
         ("Business Quality Analysis", report.business_quality),
@@ -131,12 +139,17 @@ def render_markdown(report: DDReport) -> str:
             lines.append("")
 
     # ── Financial Health ────────────────────────────────────────
-    lines += ["## Financial Health", "", "| Metric | Value | Period |", "|---|---|---|"]
-    for metric in report.financial_health.table.metrics:
-        lines.append(
-            f"| {metric.name} | {_format_value(metric.value, metric.unit)} | {metric.period} |"
-        )
-    lines.append("")
+    lines += ["## Financial Health", ""]
+    if not report.financial_health.table.metrics and not report.financial_health.commentary:
+        lines.append(_section_gap(report, "Financial Analysis"))
+        lines.append("")
+    else:
+        lines += ["| Metric | Value | Period |", "|---|---|---|"]
+        for metric in report.financial_health.table.metrics:
+            lines.append(
+                f"| {metric.name} | {_format_value(metric.value, metric.unit)} | {metric.period} |"
+            )
+        lines.append("")
     if report.financial_health.commentary:
         lines.extend(f"- {_render_claim(c)}" for c in report.financial_health.commentary)
         lines.append("")
@@ -183,7 +196,7 @@ def render_markdown(report: DDReport) -> str:
         val_rows.append(("Short interest", _safe_fmt(v.short_percent_float * 100, ".1f") + "% of float"))
     if v.short_ratio is not None:
         val_rows.append(("Short ratio (days to cover)", _safe_fmt(v.short_ratio, ".1f")))
-    if val_rows or v.target_mean is not None or v.recommendation:
+    if val_rows or v.target_mean is not None or v.recommendation or v.peers or v.commentary:
         lines += ["## Valuation & Market Data", ""]
         if val_rows:
             lines += ["| Metric | Value |", "|---|---|"]
@@ -220,6 +233,9 @@ def render_markdown(report: DDReport) -> str:
             lines.extend(f"- {_render_claim(c)}" for c in v.commentary)
         lines.append("")
 
+    else:
+        lines += ["## Valuation & Market Data", "", _section_gap(report, "Valuation"), ""]
+
     # ── Earnings Quality ────────────────────────────────────────
     eq = report.earnings_quality
     if eq.accruals_ratio is not None or eq.cash_conversion is not None:
@@ -243,7 +259,7 @@ def render_markdown(report: DDReport) -> str:
     # ── Risk Matrix ─────────────────────────────────────────────
     lines += ["## Risk Matrix", ""]
     if not report.risk_matrix:
-        lines += ["_No risks identified._", ""]
+        lines += [_section_gap(report, "Risk Matrix"), ""]
     for risk in report.risk_matrix:
         lines.append(f"### {risk.title} — severity: {risk.severity}, likelihood: {risk.likelihood}")
         lines.extend(f"- {_render_claim(c)}" for c in risk.claims)
@@ -252,8 +268,8 @@ def render_markdown(report: DDReport) -> str:
             lines.append("- Monitoring metrics: " + "; ".join(risk.monitoring_metrics))
         lines.append("")
 
-    lines += _render_section("Recent Developments", report.recent_developments)
-    lines += _render_section("Red Flags", report.red_flags)
+    lines += _render_section("Recent Developments", report.recent_developments, report)
+    lines += _render_section("Red Flags", report.red_flags, report)
 
     # ── Investment Thesis ─────────────────────────────────────
     thesis = report.investment_thesis
@@ -296,11 +312,16 @@ def render_markdown(report: DDReport) -> str:
             lines.extend(f"- {_render_claim(c)}" for c in ia.commentary)
         lines.append("")
 
+    else:
+        lines += ["## Insider Activity (SEC Form 4)", "", _section_gap(report, "Insider Activity"), ""]
+
     # ── Management Questions ────────────────────────────────────
+    lines += ["## Key Questions for Management", ""]
     if report.management_questions:
-        lines += ["## Key Questions for Management", ""]
         lines.extend(f"{i+1}. {q}" for i, q in enumerate(report.management_questions))
-        lines.append("")
+    else:
+        lines.append(_section_gap(report, "Management Questions"))
+    lines.append("")
 
     # ── Data Gaps ───────────────────────────────────────────────
     lines += ["## Data Gaps", ""]

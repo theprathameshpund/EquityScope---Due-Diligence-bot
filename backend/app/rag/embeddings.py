@@ -1,9 +1,10 @@
-﻿"""Local sentence-transformers embeddings, batched, lazily loaded."""
+"""Local sentence-transformers embeddings, batched, lazily loaded."""
 
 from __future__ import annotations
 
 import os
 from functools import lru_cache
+from time import perf_counter
 from threading import Lock
 from typing import TYPE_CHECKING, cast
 
@@ -75,29 +76,60 @@ def embedding_dim() -> int:
 
 
 def embed_passages(texts: list[str], batch_size: int = 32) -> list[list[float]]:
-    """Embed document chunks (no instruction prefix), L2-normalized.
-    
-    Uses bge-small-en-v1.5 for speed (~10x faster than bge-large).
-    Progress is logged for large batches.
-    """
+    """Embed document chunks (no instruction prefix), L2-normalized."""
     if not texts:
+        log.info("embedding_passages_skip", reason="no_texts")
         return []
-    # Log progress for batches that will take a while
-    total_batches = (len(texts) + batch_size - 1) // batch_size
-    if total_batches > 5:
-        log.info("embedding_passages_start", total_chunks=len(texts), batch_size=batch_size, total_batches=total_batches)
-    
-    vectors = get_embedder().encode(
-        texts,
+
+    total = len(texts)
+    total_batches = (total + batch_size - 1) // batch_size
+    log.info(
+        "embedding_passages_start",
+        total_chunks=total,
         batch_size=batch_size,
-        normalize_embeddings=True,
-        show_progress_bar=False,
+        total_batches=total_batches,
+        model=settings.embedding_model,
+        device=settings.embedding_device,
     )
-    
-    if total_batches > 5:
-        log.info("embedding_passages_complete", total_chunks=len(texts))
-    
-    return cast("list[list[float]]", vectors.tolist())
+
+    embedder = get_embedder()
+    vectors_out: list[list[float]] = []
+    started = perf_counter()
+    for batch_index, start in enumerate(range(0, total, batch_size), 1):
+        batch = texts[start : start + batch_size]
+        batch_started = perf_counter()
+        log.info(
+            "embedding_batch_start",
+            batch=batch_index,
+            total_batches=total_batches,
+            chunk_start=start + 1,
+            chunk_end=start + len(batch),
+            batch_size=len(batch),
+        )
+        batch_vectors = embedder.encode(
+            batch,
+            batch_size=len(batch),
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        rows = batch_vectors.tolist() if hasattr(batch_vectors, "tolist") else batch_vectors
+        vectors_out.extend(cast("list[list[float]]", rows))
+        log.info(
+            "embedding_batch_end",
+            batch=batch_index,
+            total_batches=total_batches,
+            embedded=len(vectors_out),
+            total_chunks=total,
+            seconds=round(perf_counter() - batch_started, 2),
+        )
+
+    log.info(
+        "embedding_passages_complete",
+        total_chunks=total,
+        total_batches=total_batches,
+        seconds=round(perf_counter() - started, 2),
+    )
+    return vectors_out
 
 
 def embed_query(query: str) -> list[float]:

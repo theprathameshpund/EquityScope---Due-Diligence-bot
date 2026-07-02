@@ -292,7 +292,7 @@ def _to_claims(
     valid_chunk_ids: set[str],
 ) -> list[Claim]:
     claims: list[Claim] = []
-    for item in items:
+    for item in items[:4]:
         metric_ids = [m for m in item.metric_ids if m in valid_metric_ids]
         citation_ids = [
             cid for cid in item.citation_chunk_ids
@@ -362,55 +362,11 @@ def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
                 )
             )
     if not report.business_overview:
-        revenue = _find_metric(metrics, "revenue")
-        gross_margin = _find_latest_metric_with_prefix(metrics, "gross_margin_fy")
-        if revenue is not None:
-            report.business_overview.append(
-                Claim(
-                    text=(
-                        f"Annual revenue was {revenue.value:,.0f} {revenue.unit} in {revenue.period}, "
-                        "indicating the current operating scale of the business."
-                    ),
-                    metric_ids=[revenue.metric_id],
-                    section="business_overview",
-                )
-            )
-        if gross_margin is not None:
-            report.business_overview.append(
-                Claim(
-                    text=(
-                        f"Gross margin was {gross_margin.value:.2f}% in {gross_margin.period}, "
-                        "reflecting product mix and pricing power."
-                    ),
-                    metric_ids=[gross_margin.metric_id],
-                    section="business_overview",
-                )
-            )
+        report.data_gaps.append(
+            "Insufficient data for this section: Business Overview requires verified business-model and segment evidence."
+        )
 
-    if not report.recent_developments:
-        net_margin_trend = _find_metric(metrics, "net_margin_trend_bps")
-        share_dilution = _find_metric(metrics, "share_dilution")
-        if net_margin_trend is not None:
-            report.recent_developments.append(
-                Claim(
-                    text=(
-                        f"Net margin changed by {net_margin_trend.value:.1f} bps in {net_margin_trend.period}, "
-                        "showing a recent shift in profitability."
-                    ),
-                    metric_ids=[net_margin_trend.metric_id],
-                    section="recent_developments",
-                )
-            )
-        if share_dilution is not None:
-            report.recent_developments.append(
-                Claim(
-                    text=(
-                        f"Share dilution rate was {share_dilution.value:.2f}% over {share_dilution.period}."
-                    ),
-                    metric_ids=[share_dilution.metric_id],
-                    section="recent_developments",
-                )
-            )
+    # Recent developments must come from news or filing/event evidence, not metric backfills.
 
     if not report.risk_matrix:
         risks: list[RiskEntry] = []
@@ -494,6 +450,46 @@ def _backfill_missing_sections(report: DDReport, state: AgentState) -> None:
                     )
                 )
 
+        if len(risks) < 2:
+            citation_ids = [f"{_MARKET_CHUNK_PREFIX}snapshot"] if market and market.available else []
+            structural = [
+                RiskEntry(
+                    title="Competitive Threats",
+                    severity="medium",
+                    likelihood="medium",
+                    claims=[
+                        Claim(
+                            text=(
+                                "Competitive pressure can affect pricing power, customer retention, and growth if rivals improve products, distribution, or cost structure."
+                            ),
+                            citation_chunk_ids=citation_ids,
+                            section="risk_matrix",
+                        )
+                    ],
+                    mitigation="Track market share, pricing, customer retention, and margin trends for evidence of competitive pressure.",
+                ),
+                RiskEntry(
+                    title="Regulatory Pressure",
+                    severity="medium",
+                    likelihood="medium",
+                    claims=[
+                        Claim(
+                            text=(
+                                "Regulatory or legal scrutiny can raise compliance costs, constrain business practices, or alter the risk profile for large public companies."
+                            ),
+                            citation_chunk_ids=citation_ids,
+                            section="risk_matrix",
+                        )
+                    ],
+                    mitigation="Monitor SEC filings, legal proceedings, regulatory updates, and material 8-K disclosures.",
+                ),
+            ]
+            for risk in structural:
+                if len(risks) >= 2:
+                    break
+                if all(existing.title != risk.title for existing in risks):
+                    risks.append(risk)
+
         report.risk_matrix = risks[:3]
 
     if not report.red_flags:
@@ -549,26 +545,40 @@ def _build_earnings_quality(state: AgentState) -> EarningsQualitySection:
 
 
 def _build_valuation_section(state: AgentState) -> ValuationSection:
-    """Populate the valuation section from the market snapshot."""
+    """Populate the valuation section from the market snapshot with range checks."""
     if state.market is None or not state.market.available:
         return ValuationSection()
     m = state.market
+
+    dividend_yield = m.dividend_yield
+    if dividend_yield is not None and not 0 <= dividend_yield <= 0.10:
+        log.warning("valuation_dividend_yield_outlier_omitted", ticker=state.ticker, value=dividend_yield)
+        dividend_yield = None
+    beta = m.beta
+    if beta is not None and not -5 <= beta <= 5:
+        log.warning("valuation_beta_outlier_omitted", ticker=state.ticker, value=beta)
+        beta = None
+    short_percent_float = m.short_percent_float
+    if short_percent_float is not None and not 0 <= short_percent_float <= 1.0:
+        log.warning("valuation_short_interest_outlier_omitted", ticker=state.ticker, value=short_percent_float)
+        short_percent_float = None
+
     return ValuationSection(
         pe_ttm=m.pe_ttm,
         forward_pe=m.forward_pe,
         ev_to_ebitda=m.ev_to_ebitda,
         price_to_sales=m.price_to_sales,
         price_to_book=m.price_to_book,
-        beta=m.beta,
+        beta=beta,
         target_mean=m.target_mean,
         target_high=m.target_high,
         target_low=m.target_low,
         recommendation=m.recommendation,
         recommendation_mean=m.recommendation_mean,
         num_analysts=m.num_analysts,
-        short_percent_float=m.short_percent_float,
+        short_percent_float=short_percent_float,
         short_ratio=m.short_ratio,
-        dividend_yield=m.dividend_yield,
+        dividend_yield=dividend_yield,
         payout_ratio=m.payout_ratio,
         peers=m.peers,
     )
@@ -608,6 +618,44 @@ def _metric_value(state: AgentState, metric_id: str) -> float | None:
     return metric.value if metric else None
 
 
+def _has_core_valuation(state: AgentState) -> bool:
+    market = state.market
+    if market is None or not market.available:
+        return False
+    if any(
+        value is not None and value > 0
+        for value in (market.pe_ttm, market.forward_pe, market.ev_to_ebitda, market.price_to_sales)
+    ):
+        return True
+    return any(
+        peer.pe_ttm is not None or peer.ev_to_ebitda is not None
+        for peer in (market.peers or [])
+    )
+
+
+def _coverage_ratio(state: AgentState, report: DDReport | None = None) -> float:
+    checks = [
+        bool(state.analysis and state.analysis.metrics),
+        bool(state.evidence),
+        bool(state.market and state.market.available),
+        _has_core_valuation(state),
+        bool(state.news and state.news.available and state.news.items),
+        bool(state.insider_activity and state.insider_activity.available),
+    ]
+    if report is not None:
+        checks.extend([
+            bool(report.executive_summary),
+            bool(report.business_overview),
+            bool(report.financial_health.commentary or report.financial_health.table.metrics),
+            bool(report.valuation.commentary or _has_core_valuation(state)),
+            bool(report.risk_matrix),
+            bool(report.recent_developments),
+            bool(report.institutional_summary.key_bull_thesis),
+            bool(report.institutional_summary.key_bear_thesis),
+        ])
+    return sum(1 for item in checks if item) / len(checks)
+
+
 def _overall_score_100(state: AgentState, report: DDReport | None = None) -> int:
     if state.scorecard and state.scorecard.available:
         base = state.scorecard.composite_score / 5.0 * 100
@@ -617,10 +665,14 @@ def _overall_score_100(state: AgentState, report: DDReport | None = None) -> int
     if report is not None:
         risk_penalty += 8.0 * sum(1 for risk in report.risk_matrix if risk.severity == "high")
         risk_penalty += 4.0 * len(report.red_flags)
+    if not _has_core_valuation(state):
+        risk_penalty += 10.0
     return max(0, min(100, round(base - risk_penalty)))
 
 
-def _rating_from_score(score: int) -> str:
+def _rating_from_score(score: int, state: AgentState) -> str:
+    if not _has_core_valuation(state):
+        return "Neutral / Insufficient Data"
     if score >= 82:
         return "Strong Buy"
     if score >= 65:
@@ -638,12 +690,30 @@ def _expected_return_range(state: AgentState) -> str:
         low = (market.target_low / market.price - 1.0) * 100.0
         high = (market.target_high / market.price - 1.0) * 100.0
         return f"{low:+.0f}% to {high:+.0f}% based on Yahoo Finance analyst target range."
+    if market and market.available and market.price and market.target_mean:
+        expected = (market.target_mean / market.price - 1.0) * 100.0
+        return f"{expected:+.0f}% based on Yahoo Finance mean analyst target."
     return "Data unavailable or unverifiable."
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
+def _pad_balanced_thesis(items: list[str], fallbacks: list[str], target: int = 3) -> list[str]:
+    clean = [item for item in items if item and "Data unavailable" not in item]
+    for fallback in fallbacks:
+        if len(clean) >= target:
+            break
+        _append_unique(clean, fallback)
+    return clean[:max(target, len(clean))]
 
 
 def _build_institutional_summary(state: AgentState, report: DDReport) -> InstitutionalExecutiveSummary:
     score = _overall_score_100(state, report)
     market = state.market
+    coverage = _coverage_ratio(state, report)
     confidence = 35
     confidence += 20 if state.analysis and state.analysis.metrics else 0
     confidence += 15 if state.evidence else 0
@@ -651,6 +721,8 @@ def _build_institutional_summary(state: AgentState, report: DDReport) -> Institu
     confidence += 10 if state.news and state.news.available and state.news.items else 0
     confidence += 10 if state.insider_activity and state.insider_activity.available else 0
     confidence = min(confidence, 100)
+    if coverage < 0.70:
+        confidence = min(confidence, 50)
 
     bull: list[str] = []
     bear: list[str] = []
@@ -673,9 +745,13 @@ def _build_institutional_summary(state: AgentState, report: DDReport) -> Institu
         (bull if debt <= 2.5 else bear).append(f"Debt/EBITDA was {debt:.2f}x.")
     if current is not None:
         (bull if current >= 1.0 else bear).append(f"Current ratio was {current:.2f}x.")
+    if _has_core_valuation(state):
+        _append_unique(bull, "Core valuation multiples or peer benchmarks are populated, allowing a directional valuation view.")
+    else:
+        _append_unique(bear, "Core valuation multiples or peer benchmarks are unavailable, so the rating is constrained to Neutral / Insufficient Data.")
 
     for risk in report.risk_matrix[:3]:
-        risks.append(risk.title)
+        _append_unique(risks, risk.title)
     if market and market.available:
         if market.target_mean and market.price:
             catalysts.append("Analyst target revisions and estimate changes.")
@@ -684,26 +760,42 @@ def _build_institutional_summary(state: AgentState, report: DDReport) -> Institu
     if state.news and state.news.items:
         catalysts.append("Recent company-specific news flow from Google News RSS.")
 
-    while len(bull) < 5:
-        bull.append("Data unavailable or unverifiable.")
-    while len(bear) < 5:
-        bear.append("Data unavailable or unverifiable.")
+    bull = _pad_balanced_thesis(
+        bull,
+        [
+            "Financial metrics are populated from free-source filings or XBRL, supporting a source-backed base analysis.",
+            "Market snapshot data is available for current trading context." if market and market.available else "SEC filing evidence is available for business and risk review." if state.evidence else "The report identifies which source-backed fields are available before issuing a thesis.",
+            "The thesis can be monitored through revenue growth, margins, cash conversion, and leverage metrics.",
+        ],
+    )
+    bear = _pad_balanced_thesis(
+        bear,
+        [
+            "Unavailable or unverifiable fields reduce confidence in any directional thesis.",
+            "Material risk factors require ongoing review through SEC filings and recent news.",
+            "Margin pressure, competitive disruption, regulatory exposure, litigation, and liquidity remain checklist risks until source evidence rules them out.",
+        ],
+    )
     while len(catalysts) < 3:
-        catalysts.append("Data unavailable or unverifiable.")
+        catalysts.append("Updated free-source filings, market data, or news could materially change the thesis.")
     while len(risks) < 3:
-        risks.append("Data unavailable or unverifiable.")
+        risks.append("Material risk coverage requires continued review of filings, news, valuation, and liquidity indicators.")
+
+    rating = _rating_from_score(score, state)
+    expected_return = _expected_return_range(state)
+    if rating != "Neutral / Insufficient Data" and expected_return == "Data unavailable or unverifiable.":
+        rating = "Neutral / Insufficient Data"
 
     return InstitutionalExecutiveSummary(
-        investment_rating=_rating_from_score(score),
+        investment_rating=rating,
         confidence_score=confidence,
         investment_horizon="3 Year",
         key_bull_thesis=bull[:5],
         key_bear_thesis=bear[:5],
         top_catalysts=catalysts[:3],
         top_risks=risks[:3],
-        expected_return_range=_expected_return_range(state),
+        expected_return_range=expected_return,
     )
-
 
 def _score10(value: float | None, neutral: float = 5.0) -> float:
     return round(max(0.0, min(10.0, value if value is not None else neutral)), 1)
@@ -794,6 +886,49 @@ def _build_dcf_analysis(state: AgentState) -> DCFAnalysisSection:
     return dcf
 
 
+def _ensure_structural_risks(report: DDReport, state: AgentState) -> None:
+    """Guarantee a useful minimum risk section without fabricating numeric facts."""
+    existing = {risk.title.lower() for risk in report.risk_matrix}
+    candidates = [
+        RiskEntry(
+            title="Regulatory and Antitrust Pressure",
+            severity="medium",
+            likelihood="medium",
+            mitigation=(
+                "Regulatory scrutiny can constrain product practices, acquisitions, or monetization; "
+                "monitor SEC legal disclosures, enforcement actions, and material 8-K updates."
+            ),
+            monitoring_metrics=["SEC legal proceedings", "Regulatory enforcement updates", "Material 8-K disclosures"],
+        ),
+        RiskEntry(
+            title="Competitive and Technology Disruption",
+            severity="medium",
+            likelihood="medium",
+            mitigation=(
+                "Changes in technology, customer behavior, or competitor execution can pressure growth and margins; "
+                "monitor revenue growth, margin trends, and competitive disclosures."
+            ),
+            monitoring_metrics=["Revenue growth", "Operating margin trend", "Competitive risk-factor updates"],
+        ),
+        RiskEntry(
+            title="Revenue Concentration and Cyclicality",
+            severity="medium",
+            likelihood="low",
+            mitigation=(
+                "Dependence on major products, customers, or economically sensitive demand can amplify volatility; "
+                "monitor segment mix, customer concentration, and cash-flow resilience."
+            ),
+            monitoring_metrics=["Segment revenue mix", "Customer concentration", "Free cash flow"],
+        ),
+    ]
+    for risk in candidates:
+        if len(report.risk_matrix) >= 2:
+            break
+        if risk.title.lower() not in existing:
+            report.risk_matrix.append(risk)
+            existing.add(risk.title.lower())
+
+
 def _enrich_risk_matrix(report: DDReport) -> None:
     metric_map = {
         "competition": ["Gross margin trend", "Revenue growth", "Market share disclosures"],
@@ -841,15 +976,27 @@ def _build_investment_thesis(state: AgentState, report: DDReport) -> InvestmentT
 def _build_quality_checks(state: AgentState, report: DDReport) -> ReportQualityChecks:
     score = _overall_score_100(state, report)
     dims: dict[str, float | int | str] = {"Overall Investment Score": score}
+    if state.scorecard and state.scorecard.available:
+        dims["Formula"] = (
+            "Overall Investment Score = scorecard composite / 5 * 100 "
+            "minus 8 points per high-severity risk, 4 points per red flag, "
+            "and 10 points when core valuation data is unavailable."
+        )
+        dims["Composite Input"] = round(state.scorecard.composite_score, 2)
+        for dim in state.scorecard.dimensions:
+            dims[dim.name] = dim.score
+    else:
+        dims["Formula"] = (
+            "Overall Investment Score = neutral base 50 minus risk, red-flag, "
+            "and missing-valuation penalties because no scorecard was available."
+        )
     if report.business_quality.score is not None:
         dims["Business Quality"] = report.business_quality.score
     if report.management_analysis.score is not None:
         dims["Management"] = report.management_analysis.score
-    if state.scorecard and state.scorecard.available:
-        for dim in state.scorecard.dimensions:
-            dims[dim.name] = dim.score
     if report.earnings_quality.quality_label:
         dims["Earnings Quality"] = report.earnings_quality.quality_label
+    dims["Coverage Ratio"] = round(_coverage_ratio(state, report), 2)
     return ReportQualityChecks(
         claim_verification=f"{len(report.all_claims())} claims verified by citations and/or deterministic metrics.",
         final_scorecard=dims,
@@ -899,6 +1046,23 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
     insider_section.commentary = _to_claims(
         output.insider_commentary, "insider_activity", valid_metric_ids, valid_chunk_ids
     )
+    if insider_section.available and not insider_section.commentary:
+        transaction_count = len(insider_section.transactions)
+        if transaction_count == 1:
+            interpretation = "The single reported insider transaction is insufficient to establish a persistent directional signal."
+        elif insider_section.net_shares < 0:
+            interpretation = "Repeated net insider selling is a potentially bearish signal, although transaction motives cannot be determined from Form 4 data alone."
+        elif insider_section.net_shares > 0:
+            interpretation = "Net insider buying is a potentially positive alignment signal, while transaction size and context should still be monitored."
+        else:
+            interpretation = "Reported insider transactions are balanced and do not establish a clear directional signal."
+        insider_section.commentary = [
+            Claim(
+                text=interpretation,
+                citation_chunk_ids=[f"{_MARKET_CHUNK_PREFIX}insiders"],
+                section="insider_activity",
+            )
+        ]
 
     snapshot = state.market
     report = DDReport(
@@ -928,16 +1092,21 @@ def _full_write(router: LLMRouter, state: AgentState) -> DDReport:
                 likelihood=risk.likelihood,
                 claims=_to_claims(risk.claims, "risk_matrix", valid_metric_ids, valid_chunk_ids),
             )
-            for risk in output.risk_matrix
+            for risk in output.risk_matrix[:4]
         ],
-        recent_developments=_to_claims(output.recent_developments, "recent_developments",
-                                       valid_metric_ids, valid_chunk_ids),
+        recent_developments=(
+            _to_claims(output.recent_developments, "recent_developments",
+                       valid_metric_ids, valid_chunk_ids)
+            if state.news and state.news.available and state.news.items
+            else []
+        ),
         red_flags=_to_claims(output.red_flags, "red_flags", valid_metric_ids, valid_chunk_ids),
         management_questions=list(state.management_questions),
         data_gaps=list(state.data_gaps),
         metadata=ReportMetadata(run_id=state.run_id),
     )
     _backfill_missing_sections(report, state)
+    _ensure_structural_risks(report, state)
     _enrich_risk_matrix(report)
     report.business_quality = _build_business_quality(state)
     report.management_analysis = _build_management_analysis(state)
@@ -986,9 +1155,9 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
             revision = router.complete_json(
                 "fast", load_prompt("writer_revision"), user, _Revision, max_tokens=500
             )
-        except ValueError as exc:
+        except Exception as exc:
             log.warning("revision_failed_dropping_claim", claim_id=claim.claim_id,
-                        error=str(exc))
+                        error=str(exc)[:300])
             revision = _Revision(action="drop")
 
         if revision.action == "drop" or not revision.text.strip():
@@ -1028,9 +1197,10 @@ def _partial_report(state: AgentState, reason: str) -> DDReport:
         insider_activity=_build_insider_section(state),
         scorecard=_build_scorecard_section(state),
         management_questions=list(state.management_questions),
-        data_gaps=[*state.data_gaps, f"Report prose unavailable (writer LLM failed): {reason}"],
+        data_gaps=[*state.data_gaps, "Report prose unavailable because the report writer could not produce validated structured output."],
         metadata=ReportMetadata(run_id=state.run_id),
     )
+    _ensure_structural_risks(report, state)
     _enrich_risk_matrix(report)
     report.business_quality = _build_business_quality(state)
     report.management_analysis = _build_management_analysis(state)
@@ -1046,21 +1216,31 @@ def _partial_report(state: AgentState, reason: str) -> DDReport:
 def writer_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node: write the report, or revise critic-rejected claims."""
     router = LLMRouter(state.run_id)
+    log.info(
+        "writer_node_start",
+        mode="write" if state.report is None else "revise",
+        evidence=len(state.evidence),
+        data_gaps=len(state.data_gaps),
+    )
     if state.report is None:
         try:
+            log.info("writer_full_report_start", ticker=state.ticker)
             report = _full_write(router, state)
         except Exception as exc:
             log.error("writer_failed_shipping_partial", error=str(exc)[:300])
             return {
                 "report": _partial_report(state, str(exc)[:200]),
                 "status": "written_partial",
-                "data_gaps": [f"Report prose unavailable (writer LLM failed): {exc}"[:300]],
+                "data_gaps": ["Report prose unavailable because the report writer could not produce validated structured output."],
             }
+        log.info("writer_full_report_end", ticker=state.ticker, claims=len(report.all_claims()))
         log.info("report_written", claims=len(report.all_claims()))
         return {"report": report, "status": "written"}
 
+    log.info("writer_revision_start", revision=state.revision_count + 1)
     report = _revise_claims(router, state)
     revision = state.revision_count + 1
+    log.info("writer_revision_end", revision=revision, claims=len(report.all_claims()))
     log.info("report_revised", revision=revision,
              max_revisions=settings.critic_max_revisions)
     return {"report": report, "revision_count": revision, "status": "revised"}
@@ -1397,9 +1577,9 @@ def _revise_claims(router: LLMRouter, state: AgentState) -> DDReport:
             revision = router.complete_json(
                 "writer", load_prompt("writer_revision"), user, _Revision, max_tokens=500
             )
-        except ValueError as exc:
+        except Exception as exc:
             log.warning("revision_failed_dropping_claim", claim_id=claim.claim_id,
-                        error=str(exc))
+                        error=str(exc)[:300])
             revision = _Revision(action="drop")
 
         if revision.action == "drop" or not revision.text.strip():
@@ -1432,7 +1612,7 @@ def _partial_report(state: AgentState, reason: str) -> DDReport:
             table=MetricsTable(metrics=state.analysis.metrics if state.analysis else []),
             commentary=list(state.analysis.commentary) if state.analysis else [],
         ),
-        data_gaps=[*state.data_gaps, f"Report prose unavailable (writer LLM failed): {reason}"],
+        data_gaps=[*state.data_gaps, "Report prose unavailable because the report writer could not produce validated structured output."],
         metadata=ReportMetadata(run_id=state.run_id),
     )
 
@@ -1448,7 +1628,7 @@ def writer_node(state: AgentState) -> dict[str, Any]:
             return {
                 "report": _partial_report(state, str(exc)[:200]),
                 "status": "written_partial",
-                "data_gaps": [f"Report prose unavailable (writer LLM failed): {exc}"[:300]],
+                "data_gaps": ["Report prose unavailable because the report writer could not produce validated structured output."],
             }
         log.info("report_written", claims=len(report.all_claims()))
         return {"report": report, "status": "written"}

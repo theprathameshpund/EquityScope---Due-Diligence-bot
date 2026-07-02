@@ -438,13 +438,35 @@ class LLMRouter:
                 log.info("llm_call_failed", attempt=attempt, error=msg[:200])
                 if "413" in msg or "Payload Too Large" in msg:
                     log.warning("llm_payload_too_large", attempt=attempt)
-                    # first fallback: reduce tokens and remove schema from system prompt
+                    # First fallback: reduce input pressure and remove the full schema from the prompt.
                     max_tokens = max(128, max_tokens // 2)
                     system_full = (
                         f"{system}\n\nRespond ONLY with a JSON object matching the required schema (no markdown fences, no commentary)."
                     )
-                    # try next attempt
                     last_error = "413 Payload Too Large"
+                    continue
+                json_mode_failure = "json_validate_failed" in msg or "Failed to generate JSON" in msg
+                if json_mode_failure and attempt < settings.llm_max_retries:
+                    token_limited = "max completion tokens" in msg
+                    new_max_tokens = (
+                        min(max(max_tokens * 2, max_tokens + 512), 4096)
+                        if token_limited
+                        else max_tokens
+                    )
+                    log.warning(
+                        "llm_json_generation_retry",
+                        attempt=attempt,
+                        old_max_tokens=max_tokens,
+                        new_max_tokens=new_max_tokens,
+                        token_limited=token_limited,
+                    )
+                    max_tokens = new_max_tokens
+                    system_full = (
+                        f"{system}\n\nRespond ONLY with one valid JSON object matching the required schema. "
+                        "The first character must be { and the last character must be }. "
+                        "Do not return a bare array, markdown fences, commentary, or extra text."
+                    )
+                    last_error = "provider rejected invalid JSON object"
                     continue
                 raise
             try:
