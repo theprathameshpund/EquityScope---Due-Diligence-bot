@@ -19,6 +19,25 @@ def _latest_years(values: list[FactValue], n: int) -> list[FactValue]:
     return sorted(values, key=lambda v: v.fiscal_year)[-n:]
 
 
+def _pick_year(source: dict[int, float], anchor: int | None) -> int | None:
+    """Pick the reporting year for a single-point metric.
+
+    Prefer the anchor year (the latest fiscal year where the core statements
+    are complete) so headline metrics never silently mix fiscal periods.
+    Fall back to the latest year at or before the anchor, then to the
+    latest available year.
+    """
+    if not source:
+        return None
+    if anchor is not None:
+        if anchor in source:
+            return anchor
+        at_or_before = [y for y in source if y <= anchor]
+        if at_or_before:
+            return max(at_or_before)
+    return max(source)
+
+
 def _by_year(values: list[FactValue]) -> dict[int, float]:
     return {v.fiscal_year: v.value for v in values}
 
@@ -44,6 +63,18 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     revenue = _by_year(facts.facts.get("revenue", []))
     all_revenue_years = sorted(revenue)
     years = all_revenue_years[-4:]
+
+    # Anchor year: the latest fiscal year where the core statements are
+    # complete (revenue + net income when both exist). Single-point metrics
+    # are aligned to this year so one table never silently mixes FY periods.
+    _net_income_years = _by_year(facts.facts.get("net_income", []))
+    _core_years = set(revenue) & set(_net_income_years) if _net_income_years else set(revenue)
+    anchor_year: int | None = max(_core_years) if _core_years else (
+        max(revenue) if revenue else None
+    )
+    if anchor_year is not None:
+        all_revenue_years = [y for y in all_revenue_years if y <= anchor_year]
+        years = all_revenue_years[-4:]
 
     if all_revenue_years:
         latest = all_revenue_years[-1]
@@ -138,7 +169,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
         ("net_income", "Net income", _by_year(facts.facts.get("net_income", []))),
     ):
         if source:
-            y = sorted(source)[-1]
+            y = _pick_year(source, anchor_year)
             metrics.append(
                 MetricValue(
                     metric_id=metric_id,
@@ -198,7 +229,8 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     lt_debt = _by_year(facts.facts.get("long_term_debt", []))
     lt_debt_cur = _by_year(facts.facts.get("long_term_debt_current", []))
     if lt_debt:
-        debt_year = max(lt_debt)
+        debt_year = _pick_year(lt_debt, anchor_year)
+        assert debt_year is not None
         total_debt = lt_debt[debt_year] + lt_debt_cur.get(debt_year, 0.0)
         if debt_year in op_income and debt_year in dep_amort:
             ebitda = op_income[debt_year] + dep_amort[debt_year]
@@ -229,7 +261,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     liab_cur = _by_year(facts.facts.get("liabilities_current", []))
     common = sorted(set(assets_cur) & set(liab_cur))
     if common:
-        y = common[-1]
+        y = _pick_year(dict.fromkeys(common, 0.0), anchor_year) or common[-1]
         if liab_cur[y] != 0:
             ratio = assets_cur[y] / liab_cur[y]
             metrics.append(
@@ -256,8 +288,10 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     recent_revenue_years = set(years)  # years already capped to last 4
     fcf_years = sorted((set(ocf) & set(capex)) & recent_revenue_years)
     if not fcf_years:
-        # Fallback: most recent overlap across all available years
-        fcf_years = sorted(set(ocf) & set(capex))[-1:]
+        # Fallback: most recent overlap at or before the anchor year
+        overlap = {y: 0.0 for y in set(ocf) & set(capex)}
+        fallback_year = _pick_year(overlap, anchor_year)
+        fcf_years = [fallback_year] if fallback_year is not None else []
     if fcf_years:
         y = fcf_years[-1]
         fcf = ocf[y] - capex[y]
@@ -285,10 +319,34 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
                     formula="fcf / revenue * 100",
                 )
             )
+            capex_intensity = capex[y] / revenue[y] * 100.0
+            metrics.append(
+                MetricValue(
+                    metric_id="capex_intensity",
+                    name=f"Capex intensity FY{y}",
+                    value=round(capex_intensity, 2),
+                    unit="%",
+                    period=f"FY{y}",
+                    inputs={"capex": capex[y], "revenue": revenue[y]},
+                    formula="capex / revenue * 100",
+                )
+            )
+            prev_years = [p for p in set(ocf) & set(capex) if p < y and p in revenue and revenue[p] != 0]
+            if prev_years:
+                p = max(prev_years)
+                prev_intensity = capex[p] / revenue[p] * 100.0
+                delta = capex_intensity - prev_intensity
+                if delta > 2.0:
+                    anomalies.append(
+                        f"Capex intensity rose to {capex_intensity:.1f}% of revenue in FY{y} "
+                        f"(from {prev_intensity:.1f}% in FY{p}) — forward FCF-margin pressure."
+                    )
 
     # ── Share dilution ────────────────────────────────────────
     shares = _by_year(facts.facts.get("diluted_shares", []))
-    share_years = sorted(shares)[-4:]
+    share_years = sorted(
+        y for y in shares if anchor_year is None or y <= anchor_year
+    )[-4:]
     if len(share_years) >= 2:
         first_y, last_y = share_years[0], share_years[-1]
         if shares[first_y] > 0:
@@ -320,7 +378,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     # This avoids the near-zero denominator issue when current_liabilities ≈ total_assets
     roic_years = sorted(set(net_income) & set(total_assets) & set(total_liab))
     if roic_years:
-        y = roic_years[-1]
+        y = _pick_year(dict.fromkeys(roic_years, 0.0), anchor_year) or roic_years[-1]
         invested_capital = total_assets[y] - total_liab[y]  # equity proxy
         if invested_capital > 0 and y in net_income:
             roic = net_income[y] / invested_capital * 100.0
@@ -346,7 +404,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     # Closer to 0 = higher quality; high positive = earnings not backed by cash.
     eq_years = sorted(set(net_income) & set(ocf) & set(revenue))
     if eq_years:
-        y = eq_years[-1]
+        y = _pick_year(dict.fromkeys(eq_years, 0.0), anchor_year) or eq_years[-1]
         if revenue[y] != 0:
             accruals = (net_income[y] - ocf[y]) / revenue[y] * 100.0
             metrics.append(
@@ -370,7 +428,7 @@ def compute_metrics(facts: FinancialFacts) -> FinancialAnalysis:
     # Ratio > 1 means cash earnings exceed accounting earnings.
     cc_years = sorted(set(net_income) & set(ocf))
     if cc_years:
-        y = cc_years[-1]
+        y = _pick_year(dict.fromkeys(cc_years, 0.0), anchor_year) or cc_years[-1]
         if net_income[y] != 0:
             cash_conv = ocf[y] / net_income[y]
             metrics.append(

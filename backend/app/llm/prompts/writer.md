@@ -200,6 +200,9 @@ executive_summary:
 business_overview:
 - MUST contain 3-4 claims.
 - MUST describe: core business segments, revenue drivers, how the company makes money, and competitive positioning.
+- PREFER evidence chunks from the 10-K business section (Item 1) over market-data chunks.
+- MUST NOT use peripheral risk-factor details (supplier codes of conduct, compliance
+  programs, litigation specifics) as a stand-in for the business description.
 - MUST NOT rely on METRICS as primary content.
 - Metrics can support explanation, but cannot replace business-model description.
 
@@ -231,14 +234,19 @@ earnings_quality_commentary:
 insider_commentary:
 - MUST include interpretation of insider behavior when insider data exists.
 - Consistent selling may be a bearish signal; one-off sale may be neutral; buying activity may be positive.
+- SCALE RULE: when the evidence includes scale context (net value as % of market cap),
+  you MUST reflect it. Net activity below ~0.05% of market cap is routine 10b5-1
+  activity for a large company — describe it as a neutral observation, NOT a bearish
+  signal or red flag, and do not headline it in executive_summary or red_flags.
 - Avoid speculation beyond the transaction data.
 - If no data exists, output 1 claim: "No insider activity data available."
 
 ----------------------------------------------------------------
 
 risk_matrix:
-- MUST include at least 2 risks.
-- Prefer evidence-based risks.
+- MUST include at least 3 risks.
+- Prefer evidence-based risks; every risk should carry at least one cited claim
+  explaining why it matters for this specific company.
 - If no direct evidence exists, generate structural risks based on business model.
 - Allowed structural risks: regulatory pressure, competitive threats, revenue concentration, cyclicality, technology disruption.
 - Do NOT output "No verified content".

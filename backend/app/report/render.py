@@ -17,6 +17,15 @@ def _safe_fmt(value: Any, fmt: str, default: str = "n/a") -> str:
         return default
 
 
+def _multiple(value: float | None) -> str:
+    """Render a valuation multiple; negative multiples are not meaningful."""
+    if value is None:
+        return "—"
+    if value <= 0:
+        return "n.m."
+    return f"{value:,.1f}x"
+
+
 def _format_value(value: float | None, unit: str) -> str:
     """Human-friendly rendering for numeric metric values. Returns 'n/a' for missing values."""
     if value is None:
@@ -72,6 +81,13 @@ def render_markdown(report: DDReport) -> str:
     if report.company.sector:
         lines.append(f"_Sector: {report.company.sector} / {report.company.industry}_")
     lines.append("")
+    if report.metadata.partial:
+        lines += [
+            "> ⚠️ **PARTIAL RUN** — prose generation did not fully complete; sections were "
+            "built from deterministic data only. Rating authority is capped "
+            "(see Pipeline QA Log appendix).",
+            "",
+        ]
 
     inst = report.institutional_summary
     lines += [
@@ -81,6 +97,8 @@ def render_markdown(report: DDReport) -> str:
         f"- Confidence score: **{inst.confidence_score}/100**",
         f"- Investment horizon: **{inst.investment_horizon}**",
         f"- Expected return range: {inst.expected_return_range}",
+        "",
+        f"_{report.quality_checks.rating_scale}_",
         "",
         "**Key Bull Thesis**",
         "",
@@ -176,16 +194,20 @@ def render_markdown(report: DDReport) -> str:
     # ── Valuation & Analyst Consensus ──────────────────────────
     v = report.valuation
     val_rows: list[tuple[str, str]] = []
+    if v.price is not None:
+        val_rows.append(("Current price", "$" + _safe_fmt(v.price, ",.2f")))
+    if v.market_cap is not None:
+        val_rows.append(("Market cap", f"${v.market_cap / 1e9:,.1f}B"))
     if v.pe_ttm is not None:
-        val_rows.append(("Trailing P/E", _safe_fmt(v.pe_ttm, ".1f") + "x"))
+        val_rows.append(("Trailing P/E", _multiple(v.pe_ttm)))
     if v.forward_pe is not None:
-        val_rows.append(("Forward P/E", _safe_fmt(v.forward_pe, ".1f") + "x"))
+        val_rows.append(("Forward P/E", _multiple(v.forward_pe)))
     if v.ev_to_ebitda is not None:
-        val_rows.append(("EV/EBITDA", _safe_fmt(v.ev_to_ebitda, ".1f") + "x"))
+        val_rows.append(("EV/EBITDA", _multiple(v.ev_to_ebitda)))
     if v.price_to_sales is not None:
-        val_rows.append(("Price/Sales", _safe_fmt(v.price_to_sales, ".1f") + "x"))
+        val_rows.append(("Price/Sales", _multiple(v.price_to_sales)))
     if v.price_to_book is not None:
-        val_rows.append(("Price/Book", _safe_fmt(v.price_to_book, ".1f") + "x"))
+        val_rows.append(("Price/Book", _multiple(v.price_to_book)))
     if v.beta is not None:
         val_rows.append(("Beta", _safe_fmt(v.beta, ".2f")))
     if v.dividend_yield is not None:
@@ -193,7 +215,12 @@ def render_markdown(report: DDReport) -> str:
     if v.payout_ratio is not None:
         val_rows.append(("Payout ratio", _safe_fmt(v.payout_ratio * 100, ".1f") + "%"))
     if v.short_percent_float is not None:
-        val_rows.append(("Short interest", _safe_fmt(v.short_percent_float * 100, ".1f") + "% of float"))
+        short_val = _safe_fmt(v.short_percent_float * 100, ".2f") + "% of float"
+        if v.shares_short and v.float_shares:
+            short_val += f" ({v.shares_short:,.0f} short / {v.float_shares:,.0f} float)"
+        if v.short_interest_date:
+            short_val += f", as of {v.short_interest_date}"
+        val_rows.append(("Short interest", short_val))
     if v.short_ratio is not None:
         val_rows.append(("Short ratio (days to cover)", _safe_fmt(v.short_ratio, ".1f")))
     if val_rows or v.target_mean is not None or v.recommendation or v.peers or v.commentary:
@@ -217,17 +244,24 @@ def render_markdown(report: DDReport) -> str:
             )
             lines.append(f"**12-Month Price Target**: mean ${_safe_fmt(v.target_mean, '.2f')}" + high_low)
         if v.peers:
-            lines += ["", "**Peer Comparison**", "", "| Peer | P/E | P/S | EV/EBITDA | P/B |",
+            lines += ["", "**Peer Comparison**", "", "| Company | P/E | P/S | EV/EBITDA | P/B |",
                       "|---|---|---|---|---|"]
+            # Subject company first so the relative read is one glance.
+            lines.append(
+                f"| **{report.company.ticker} (this report)** | {_multiple(v.pe_ttm)} | "
+                f"{_multiple(v.price_to_sales)} | {_multiple(v.ev_to_ebitda)} | "
+                f"{_multiple(v.price_to_book)} |"
+            )
             for p in v.peers:
-                def _m(val):
-                    return (_safe_fmt(val, ".1f") + "x") if val is not None else "—"
-
-                pe = _m(p.pe_ttm)
-                ps = _m(p.price_to_sales)
-                ev = _m(p.ev_to_ebitda)
-                pb = _safe_fmt(p.price_to_book, ".1f") if p.price_to_book is not None else "—"
-                lines.append(f"| {p.ticker} | {pe} | {ps} | {ev} | {pb} |")
+                lines.append(
+                    f"| {p.ticker} | {_multiple(p.pe_ttm)} | {_multiple(p.price_to_sales)} | "
+                    f"{_multiple(p.ev_to_ebitda)} | {_multiple(p.price_to_book)} |"
+                )
+            lines.append("")
+            lines.append(
+                f"_Source: Yahoo Finance, as of {report.metadata.generated_at:%Y-%m-%d}. "
+                "n.m. = not meaningful (negative denominator)._"
+            )
         if v.commentary:
             lines.append("")
             lines.extend(f"- {_render_claim(c)}" for c in v.commentary)
@@ -263,7 +297,7 @@ def render_markdown(report: DDReport) -> str:
     for risk in report.risk_matrix:
         lines.append(f"### {risk.title} — severity: {risk.severity}, likelihood: {risk.likelihood}")
         lines.extend(f"- {_render_claim(c)}" for c in risk.claims)
-        lines.append(f"- Mitigation: {risk.mitigation}")
+        lines.append(f"- Mitigation & monitoring: {risk.mitigation}")
         if risk.monitoring_metrics:
             lines.append("- Monitoring metrics: " + "; ".join(risk.monitoring_metrics))
         lines.append("")
@@ -336,6 +370,7 @@ def render_markdown(report: DDReport) -> str:
         "## Report Quality Checks",
         "",
         f"- Claim verification: {report.quality_checks.claim_verification}",
+        f"- Rating scale: {report.quality_checks.rating_scale}",
         f"- Source policy: {report.quality_checks.source_policy}",
         f"- Stale data policy: {report.quality_checks.stale_data_policy}",
         f"- Unavailable-data policy: {report.quality_checks.unavailable_policy}",
@@ -356,7 +391,14 @@ def render_markdown(report: DDReport) -> str:
         f"- Models: {', '.join(f'{k}={v}' for k, v in meta.model_versions.items()) or 'n/a'}",
     ]
     if meta.warnings:
-        lines.append("- Warnings:")
-        lines.extend(f"  - {w}" for w in meta.warnings)
+        lines += [
+            "",
+            "## Appendix — Pipeline QA Log",
+            "",
+            "_Internal verification notes (dropped claims, budget events). "
+            "Not part of the investment analysis._",
+            "",
+        ]
+        lines.extend(f"- {w}" for w in meta.warnings)
     lines.append("")
     return "\n".join(lines)

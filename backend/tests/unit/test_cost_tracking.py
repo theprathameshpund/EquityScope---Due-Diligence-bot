@@ -80,7 +80,7 @@ def test_pacer_disabled_never_blocks() -> None:
 
 
 def test_quota_exhausted_detection() -> None:
-    from app.llm.router import _is_quota_exhausted
+    from app.llm.router import _is_quota_exhausted, _is_request_too_large
 
     tpd = RuntimeError(
         "Error code: 429 - {'error': {'message': 'Rate limit reached ... "
@@ -89,8 +89,12 @@ def test_quota_exhausted_detection() -> None:
     too_large = RuntimeError("Error code: 413 - request too large for model")
     transient = RuntimeError("Connection error.")
     assert _is_quota_exhausted(tpd)
-    assert _is_quota_exhausted(too_large)
+    # 413 is a request-size problem, NOT quota: key rotation can never fix it
+    # (every org shares the same structural per-request ceiling).
+    assert not _is_quota_exhausted(too_large)
+    assert _is_request_too_large(too_large)
     assert not _is_quota_exhausted(transient)
+    assert not _is_request_too_large(transient)
 
 
 def test_extract_json_strips_fences() -> None:

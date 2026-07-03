@@ -56,6 +56,8 @@ class RiskEntry(BaseModel):
 
 class ValuationSection(BaseModel):
     """Current valuation multiples, analyst price targets, and peer benchmarks."""
+    price: float | None = None
+    market_cap: float | None = None
     pe_ttm: float | None = None
     forward_pe: float | None = None
     ev_to_ebitda: float | None = None
@@ -70,6 +72,9 @@ class ValuationSection(BaseModel):
     num_analysts: int = 0
     short_percent_float: float | None = None
     short_ratio: float | None = None
+    shares_short: float | None = None
+    float_shares: float | None = None
+    short_interest_date: str = ""
     dividend_yield: float | None = None
     payout_ratio: float | None = None
     peers: list[PeerMultiple] = Field(default_factory=list)
@@ -147,8 +152,16 @@ class InvestmentThesisSection(BaseModel):
     exit_triggers: list[str] = Field(default_factory=list)
 
 
+RATING_SCALE_LEGEND = (
+    "Rating scale (score-derived): Strong Buy >= 82 | Buy 65-81 | Hold 45-64 | "
+    "Sell 25-44 | Strong Sell < 25; Neutral / Insufficient Data when core valuation "
+    "inputs are unavailable."
+)
+
+
 class ReportQualityChecks(BaseModel):
     claim_verification: str = ""
+    rating_scale: str = RATING_SCALE_LEGEND
     source_policy: str = "Free sources only: SEC EDGAR/XBRL, Yahoo Finance/yfinance, Google News RSS, FRED when configured."
     stale_data_policy: str = "Prefer latest fiscal year and TTM/current market data when available."
     unavailable_policy: str = "Data unavailable or unverifiable."
@@ -163,6 +176,9 @@ class ReportMetadata(BaseModel):
     cost_usd: float = 0.0
     model_versions: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    partial: bool = False
+    """True when prose generation failed or no claims verified — renderers
+    must watermark the report as PARTIAL RUN and rating authority is capped."""
 
 
 class DDReport(BaseModel):

@@ -53,6 +53,8 @@ export interface PeerMultiple {
 }
 
 export interface ValuationSection {
+  price: number | null;
+  market_cap: number | null;
   pe_ttm: number | null;
   forward_pe: number | null;
   ev_to_ebitda: number | null;
@@ -67,6 +69,9 @@ export interface ValuationSection {
   num_analysts: number;
   short_percent_float: number | null;
   short_ratio: number | null;
+  shares_short: number | null;
+  float_shares: number | null;
+  short_interest_date: string;
   dividend_yield: number | null;
   payout_ratio: number | null;
   peers: PeerMultiple[];
@@ -159,6 +164,7 @@ export interface InvestmentThesisSection {
 
 export interface ReportQualityChecks {
   claim_verification: string;
+  rating_scale: string;
   source_policy: string;
   stale_data_policy: string;
   unavailable_policy: string;
@@ -173,6 +179,7 @@ export interface ReportMetadata {
   cost_usd: number;
   model_versions: Record<string, string>;
   warnings: string[];
+  partial: boolean;
 }
 
 export interface DDReport {

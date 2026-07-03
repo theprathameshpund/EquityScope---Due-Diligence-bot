@@ -37,7 +37,7 @@ from app.logging_setup import bind_run_id, get_logger
 from app.memory.checkpoints import get_checkpointer
 from app.rag.ingestion import ingest_company
 from app.report.render import render_markdown
-from app.report.qa import run_final_report_qa
+from app.report.qa import run_final_report_qa, truncate_words
 from app.report.schema import CompanyMeta, DDReport, ReportMetadata
 from app.state import AgentState, ProgressEvent, RetrievedEvidence, RunBudget, new_id
 
@@ -212,22 +212,25 @@ def finalize_node(state: AgentState) -> dict[str, Any]:
                 ticker=state.ticker,
                 cik=state.cik,
             ),
-            metadata=ReportMetadata(run_id=state.run_id),
+            metadata=ReportMetadata(run_id=state.run_id, partial=True),
         )
         new_gaps.append("Report generation did not complete; partial output only.")
 
+    dropped_notes: list[str] = []
     for claim in report.all_claims():
-        if claim.verification_status in {"unsupported", "unverified"} and (
-            claim.verification_status == "unsupported"
-        ):
+        if claim.verification_status == "unsupported":
             report.drop_claim(claim.claim_id)
-            gap = f"Unverifiable claim dropped after max revisions: {claim.text[:120]}"
-            new_gaps.append(gap)
+            dropped_notes.append(
+                "Unverifiable claim dropped after max revisions: "
+                + truncate_words(claim.text, 140)
+            )
             log.warning("unverified_claim_dropped", claim_id=claim.claim_id,
                         text=claim.text[:120])
 
     duration = (datetime.now(UTC) - state.started_at).total_seconds()
-    warnings = list(new_gaps)
+    # Pipeline QA notes belong in the warnings appendix, not the client-facing
+    # data-gaps section. Preserve warnings appended during revision passes.
+    warnings = [*report.metadata.warnings, *dropped_notes]
     if tracker.exceeded:
         warnings.append(
             f"Token budget exceeded ({tracker.tokens_used}/{tracker.token_limit}); "
@@ -237,6 +240,7 @@ def finalize_node(state: AgentState) -> dict[str, Any]:
     report.data_gaps = list(dict.fromkeys(_clean_report_message(gap) for gap in [*state.data_gaps, *new_gaps]))
     report.metadata = ReportMetadata(
         run_id=state.run_id,
+        partial=report.metadata.partial,
         duration_s=round(duration, 1),
         tokens_used=tracker.tokens_used,
         cost_usd=round(tracker.cost_usd, 6),
@@ -381,6 +385,23 @@ def run_report(
     report = final.get("report")
     assert report is None or isinstance(report, DDReport)
     evidence = [e for e in final.get("evidence", []) if isinstance(e, RetrievedEvidence)]
+    # Ship the synthetic market/news/insider chunks too so the UI can resolve
+    # mkt_* citations to their source text and direct article URLs.
+    try:
+        from types import SimpleNamespace
+        from typing import cast
+
+        from app.agents.writer_agent import _synthetic_market_evidence
+
+        synth_state = SimpleNamespace(
+            market=final.get("market"),
+            news=final.get("news"),
+            insider_activity=final.get("insider_activity"),
+            ticker=str(final.get("ticker", "")),
+        )
+        evidence.extend(_synthetic_market_evidence(cast("AgentState", synth_state)))
+    except Exception as exc:
+        log.warning("synthetic_evidence_payload_failed", error=str(exc))
     store_run_status(rid, "done", company=company, report=report, evidence=evidence)
     publish_event(rid, "run", "done", message="Report ready")
     log.info("run_report_done", run_id=rid, seconds=round(perf_counter() - run_started, 2))

@@ -133,10 +133,13 @@ def _compute_scorecard(
 
     # ── 3. Profitability (5=highly profitable, 1=loss-making) ──
     fcf_margin = _metric("fcf_margin")
-    net_margin_key = next(
-        (k for k in ["net_margin_fy2024", "net_margin_fy2023", "net_margin_fy2022"]
-         if _metric(k) is not None), None
-    )
+    net_margin_key: str | None = None
+    if analysis is not None:
+        net_margin_ids = sorted(
+            (m.metric_id for m in analysis.metrics if m.metric_id.startswith("net_margin_fy")),
+            reverse=True,
+        )
+        net_margin_key = net_margin_ids[0] if net_margin_ids else None
     nm = _metric(net_margin_key) if net_margin_key else None
     margin = fcf_margin if fcf_margin is not None else nm
     if margin is not None:
@@ -157,20 +160,30 @@ def _compute_scorecard(
     # ── 4. Financial Health (5=fortress balance sheet, 1=distressed) ──
     current_ratio = _metric("current_ratio")
     debt_ebitda = _metric("debt_to_ebitda")
+    fcf_abs = _metric("fcf")
     if current_ratio is not None or debt_ebitda is not None:
         score = 3  # default
         parts = []
         if current_ratio is not None:
-            if current_ratio >= 2.0:
-                score = min(score + 1, 5); parts.append(f"current ratio {current_ratio:.2f}x")
+            if current_ratio >= 1.5:
+                score = min(score + 1, 5)
+                parts.append(f"current ratio {current_ratio:.2f}x (comfortable liquidity)")
             elif current_ratio < 1.0:
-                score = max(score - 1, 1); parts.append(f"current ratio {current_ratio:.2f}x (<1)")
+                score = max(score - 1, 1)
+                parts.append(f"current ratio {current_ratio:.2f}x (<1, liquidity pressure)")
+            else:
+                parts.append(f"current ratio {current_ratio:.2f}x (adequate)")
         if debt_ebitda is not None:
             if debt_ebitda <= 1.0:
-                score = min(score + 1, 5); parts.append(f"net debt/EBITDA {debt_ebitda:.1f}x")
+                score = min(score + 1, 5); parts.append(f"low leverage {debt_ebitda:.1f}x debt/EBITDA")
             elif debt_ebitda >= 4.0:
-                score = max(score - 1, 1); parts.append(f"high leverage {debt_ebitda:.1f}x")
-        note = "; ".join(parts) if parts else "Moderate balance sheet"
+                score = max(score - 1, 1); parts.append(f"high leverage {debt_ebitda:.1f}x debt/EBITDA")
+        else:
+            parts.append("no debt/EBITDA computable (leverage credit unavailable)")
+        if fcf_abs is not None and fcf_abs > 0:
+            parts.append("positive free cash flow")
+        # Rationale must always explain the score — unexplained scores are unauditable.
+        note = "; ".join(parts) if parts else "Moderate balance sheet (no liquidity/leverage inputs)"
         mids = [m for m in ["current_ratio", "debt_to_ebitda"] if _metric(m) is not None]
         dimensions.append(ScorecardDimension(name="Financial Health", score=score,
                                              rationale=note, metric_ids=mids))
@@ -199,6 +212,11 @@ def _compute_scorecard(
                 note = f"1Y return {change:+.1f}%; elevated short interest {short_pct:.1f}%"
             else:
                 note = f"1Y price return {change:+.1f}%"
+            if change > 80:
+                note += (
+                    " — caveat: an extended move of this size is also a mean-reversion "
+                    "risk, not purely a strength"
+                )
             dimensions.append(ScorecardDimension(name="Market Momentum", score=score,
                                                  rationale=note))
 

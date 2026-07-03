@@ -77,6 +77,21 @@ def _synthetic_market_evidence(state: AgentState) -> list[RetrievedEvidence]:
                 score=0.8,
             )
         )
+        # Mirror the writer's per-article chunks so mkt_news_N citations verify.
+        for i, item in enumerate(state.news.items[:3]):
+            pub = f" ({item.published_at.strftime('%Y-%m-%d')})" if item.published_at else ""
+            chunks.append(
+                RetrievedEvidence(
+                    chunk_id=f"{_MARKET_CHUNK_PREFIX}news_{i}",
+                    text=f"[{item.sentiment.upper()}] {item.title}{pub}"
+                         + (f" — {item.snippet[:300]}" if item.snippet else ""),
+                    source_url=item.url,
+                    form_type="news",
+                    fiscal_period="current",
+                    section=f"News article {i + 1}",
+                    score=0.8,
+                )
+            )
 
     if state.insider_activity and state.insider_activity.available:
         ia = state.insider_activity

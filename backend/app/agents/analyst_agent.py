@@ -158,18 +158,76 @@ def _write_commentary(
 
 
 def _fallback_management_questions(state: AgentState, analysis: FinancialAnalysis) -> list[str]:
+    """Metric-driven questions when the LLM is unavailable.
+
+    Built from this run's own computed values so they are company-specific,
+    never generic boilerplate that fits any ticker.
+    """
     company = state.company_name or state.ticker
-    questions = [
-        f"Which factors most affected {company}'s latest revenue growth, margin trend, and cash conversion?",
-        "What actions are being taken to address any margin pressure, cost inflation, or operating leverage weakness?",
-        "How should investors assess liquidity, debt maturities, refinancing needs, and capital allocation over the next 12-24 months?",
-        "Which customer, supplier, geographic, or segment concentrations are most material to revenue quality?",
-        "What legal, regulatory, antitrust, litigation, or disclosed 8-K events could materially affect the outlook?",
-    ]
-    if analysis.anomalies:
-        questions.insert(0, f"What explains the detected anomaly: {analysis.anomalies[0][:120]}?")
+    by_id = {m.metric_id: m for m in analysis.metrics}
+    questions: list[str] = []
+
+    # Topics with a dedicated question below — skip their anomaly duplicates.
+    dedicated_topics = ("capex intensity", "operating margin", "cash conversion")
+    for anomaly in analysis.anomalies:
+        if len(questions) >= 2:
+            break
+        if any(topic in anomaly.lower() for topic in dedicated_topics):
+            continue
+        # Rephrase as a clean question: strip the flag's trailing punctuation
+        # and any appended "— consequence" tail so no ".?" artifacts leak.
+        core = anomaly.split("—")[0].strip().rstrip(".;,")
+        if core:
+            questions.append(f"What explains this: {core}?")
+
+    om_trend = by_id.get("operating_margin_trend_bps")
+    if om_trend is not None:
+        if om_trend.value > 0:
+            questions.append(
+                f"What drove the {om_trend.value:+,.0f} bps operating-margin expansion in "
+                f"{om_trend.period.split('->')[-1]}, and how much of it is sustainable?"
+            )
+        else:
+            questions.append(
+                f"What is the plan to reverse the {abs(om_trend.value):,.0f} bps operating-margin "
+                f"contraction in {om_trend.period.split('->')[-1]}?"
+            )
+    capex = by_id.get("capex_intensity")
+    fcf_margin = by_id.get("fcf_margin")
+    if capex is not None and fcf_margin is not None:
+        questions.append(
+            f"With capex at {capex.value:.1f}% of revenue, how will investment plans affect the "
+            f"{fcf_margin.value:.1f}% free-cash-flow margin over the next 2-3 years?"
+        )
+    growth = by_id.get("revenue_growth_yoy")
+    cagr = by_id.get("revenue_cagr_3y")
+    if growth is not None:
+        cagr_part = f" versus the {cagr.value:.1f}% 3-year CAGR" if cagr is not None else ""
+        questions.append(
+            f"Which segments and demand drivers underpin the {growth.value:.1f}% revenue growth in "
+            f"{growth.period}{cagr_part}, and where is deceleration most likely?"
+        )
+    dilution = by_id.get("share_dilution")
+    if dilution is not None and dilution.value < 0:
+        questions.append(
+            f"After reducing the diluted share count {abs(dilution.value):.1f}% over {dilution.period}, "
+            "how is capital allocation prioritized among buybacks, dividends, capex, and M&A?"
+        )
+    cash_conv = by_id.get("cash_conversion")
+    if cash_conv is not None and cash_conv.value < 1.0:
+        questions.append(
+            f"Why is cash conversion only {cash_conv.value:.2f}x, and when will operating cash flow "
+            "catch up with reported earnings?"
+        )
+    questions.append(
+        f"What legal, regulatory, antitrust, or litigation developments could materially change "
+        f"{company}'s outlook, and what remedies or contingencies are being prepared?"
+    )
     if state.data_gaps:
-        questions.append("Which unavailable public-data fields should investors request directly from management before underwriting the thesis?")
+        questions.append(
+            "Which of the publicly unavailable data fields noted in this report can management "
+            "provide directly (segment detail, concentration, guidance)?"
+        )
     return questions[:8]
 
 
@@ -183,8 +241,10 @@ def _generate_management_questions(
         "anomalies": analysis.anomalies,
         "data_gaps": state.data_gaps,
         "metrics_summary": [
-            {"id": m.metric_id, "name": m.name, "value": m.value, "unit": m.unit}
-            for m in analysis.metrics[:15]
+            {"id": m.metric_id, "name": m.name, "value": m.value, "unit": m.unit,
+             "period": m.period}
+            # Latest periods first so questions anchor to current-year trends.
+            for m in sorted(analysis.metrics, key=lambda m: m.period, reverse=True)[:15]
         ],
     }
     system = load_prompt("management_questions").format(company=state.company_name)

@@ -81,6 +81,18 @@ class RateLimitPacer:
             )
             time.sleep(wait)
 
+    def refund(self, estimated_tokens: int) -> None:
+        """Remove a reserved slot after the provider rejected the request
+        outright (413 request-too-large) — no tokens were actually consumed,
+        so the failed attempt must not stall the next one for a minute."""
+        if self.rpm <= 0 and self.tpm <= 0:
+            return
+        with self._lock:
+            for i in range(len(self._events) - 1, -1, -1):
+                if self._events[i][1] == estimated_tokens:
+                    del self._events[i]
+                    return
+
 
 _pacers: dict[tuple[str, str], RateLimitPacer] = {}
 _pacers_lock = threading.Lock()
@@ -156,11 +168,17 @@ def load_prompt(name: str) -> str:
 
 def _is_quota_exhausted(exc: BaseException) -> bool:
     """Provider quota errors that retrying cannot fix inside one run -
-    daily token caps (TPD) or requests too large for the per-minute window."""
+    daily/minute token caps. Rotating to another API key CAN help here."""
     message = str(exc)
-    return "rate_limit_exceeded" in message or "Error code: 429" in message or (
-        "Error code: 413" in message
-    )
+    return "rate_limit_exceeded" in message or "Error code: 429" in message
+
+
+def _is_request_too_large(exc: BaseException) -> bool:
+    """A single request that exceeds the model tier's structural per-request
+    ceiling (413). Every org has the same limit, so key rotation can never
+    fix it — the request must be shrunk or routed to a bigger-TPM tier."""
+    message = str(exc)
+    return "Error code: 413" in message or "Request too large" in message
 
 
 def _quota_cooldown_s(exc: BaseException) -> float:
@@ -179,6 +197,10 @@ _smart_fallback_lock = threading.Lock()
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    # Oversized requests fail identically on every retry — never retry them
+    # verbatim; the caller must shrink the request or change tier instead.
+    if _is_request_too_large(exc):
+        return False
     name = type(exc).__name__
     return name in {
         "RateLimitError",
@@ -191,6 +213,37 @@ def _is_retryable(exc: BaseException) -> bool:
         "ServiceUnavailableError",
         "OverloadedError",
     }
+
+
+def _tier_tpm(provider: str, price_tier: str) -> int:
+    if provider != "groq":
+        return 0
+    return settings.groq_tpm_fast if price_tier == "fast" else settings.groq_tpm_smart
+
+
+def _clamp_max_tokens_to_tpm(
+    provider: str, price_tier: str, input_estimate: int, max_tokens: int
+) -> int:
+    """Cap the output budget so input + output fits the tier's per-minute
+    token ceiling. Without this, retry logic that doubles max_tokens produces
+    requests that 413 on every key (the limit is structural per org)."""
+    tpm = _tier_tpm(provider, price_tier)
+    if tpm <= 0:
+        return max_tokens
+    headroom = tpm - input_estimate - 64  # small margin for provider-side counting
+    if headroom >= max_tokens:
+        return max_tokens
+    clamped = max(256, headroom)
+    if clamped < max_tokens:
+        log.info(
+            "llm_max_tokens_clamped_to_tpm",
+            tier=price_tier,
+            tpm=tpm,
+            input_estimate=input_estimate,
+            requested=max_tokens,
+            clamped=clamped,
+        )
+    return min(max_tokens, clamped)
 
 
 def _route(tier: TaskTier) -> tuple[str, str, str]:
@@ -254,10 +307,13 @@ class LLMRouter:
             with _smart_fallback_lock:
                 if time.monotonic() < _smart_fallback_until:
                     provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
-        # Conservative estimate: full prompt plus the entire output allowance.
-        estimated_tokens = _approx_tokens(system + user) + max_tokens
+        # Clamp output so a single request always fits the tier's TPM ceiling,
+        # then estimate conservatively: full prompt plus the output allowance.
+        input_estimate = _approx_tokens(system + user)
+        max_tokens = _clamp_max_tokens_to_tpm(provider, price_tier, input_estimate, max_tokens)
+        estimated_tokens = input_estimate + max_tokens
 
-        def _paced_call(prov: str, mdl: str, tier_name: str) -> tuple[str, int, int]:
+        def _paced_call(prov: str, mdl: str, tier_name: str, out_budget: int) -> tuple[str, int, int]:
             @retry(
                 stop=stop_after_attempt(settings.llm_max_retries + 1),
                 wait=wait_exponential(multiplier=1, max=20),
@@ -265,23 +321,33 @@ class LLMRouter:
                 reraise=True,
             )
             def _call() -> tuple[str, int, int]:
-                _get_pacer(prov, tier_name).acquire(estimated_tokens)
-                if prov == "anthropic":
-                    return self._call_anthropic(mdl, system, user, max_tokens, temperature)
-                return self._call_groq(mdl, system, user, json_mode, max_tokens, temperature)
+                pacer = _get_pacer(prov, tier_name)
+                pacer.acquire(estimated_tokens)
+                try:
+                    if prov == "anthropic":
+                        return self._call_anthropic(mdl, system, user, out_budget, temperature)
+                    return self._call_groq(mdl, system, user, json_mode, out_budget, temperature)
+                except Exception as exc:
+                    if _is_request_too_large(exc):
+                        # The provider rejected it outright — nothing was
+                        # consumed, so free the pacer slot immediately.
+                        pacer.refund(estimated_tokens)
+                    raise
 
             return _call()
 
         try:
-            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier, max_tokens)
         except Exception as exc:
-            # Daily-quota exhaustion on the smart Groq model cannot be waited
-            # out within a run - degrade to the fast model (separate, much
-            # larger daily quota) rather than losing the report prose.
+            # Two rescuable cases when the smart Groq model fails:
+            #  - quota exhaustion (429/TPD): the fast model has a separate,
+            #    much larger quota;
+            #  - request too large (413): the fast tier's TPM ceiling is ~3x
+            #    higher, so the same request usually fits there.
             can_fall_back = (
                 provider == "groq"
                 and model != settings.groq_model_fast
-                and _is_quota_exhausted(exc)
+                and (_is_quota_exhausted(exc) or _is_request_too_large(exc))
             )
             if not can_fall_back:
                 raise
@@ -296,10 +362,15 @@ class LLMRouter:
                 tier=tier,
                 model=model,
                 cooldown_s=cooldown,
+                reason="request_too_large" if _is_request_too_large(exc) else "quota",
                 error=str(exc)[:200],
             )
             provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
-            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
+            # Re-clamp for the fast tier's (larger) TPM ceiling.
+            fallback_max_tokens = _clamp_max_tokens_to_tpm(
+                provider, price_tier, input_estimate, max_tokens
+            )
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier, fallback_max_tokens)
         price_in, price_out = settings.model_price_per_million(provider, price_tier)
         cost = in_tok / 1_000_000 * price_in + out_tok / 1_000_000 * price_out
         self.tracker.add(in_tok, out_tok, cost)

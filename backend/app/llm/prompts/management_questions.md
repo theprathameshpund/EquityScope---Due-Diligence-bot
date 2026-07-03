@@ -85,6 +85,12 @@ STRICT RULES
 - Use numbers ONLY if explicitly provided in the input.
 - Do NOT invent, estimate, or generalize metrics.
 
+- RECENCY (STRICT): base every trend question on the LATEST fiscal-year data in the input.
+  - Never build a question on a historical window that the latest data contradicts.
+  - Example: if operating margin contracted FY2021→FY2023 but expanded in FY2024,
+    ask about sustaining the FY2024 expansion — NOT about the old contraction.
+  - When citing a trend, always include the most recent fiscal year available.
+
 - Avoid:
   - Generic phrasing (“can you elaborate…”)
   - Multi-part or compound questions
