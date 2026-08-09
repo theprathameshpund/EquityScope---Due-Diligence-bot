@@ -166,6 +166,28 @@ def load_prompt(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# Reasoning models generate <think>...</think> tokens that break Groq's
+# server-side JSON validation when response_format={"type":"json_object"} is set.
+# Match by lowercased substring so variant names (qwen3-32b, qwen/qwen3-32b, etc.) all match.
+# gpt-oss: OpenAI's open-source reasoning variants served via Groq also emit thinking tokens.
+# o1: OpenAI o1-family models are reasoning models.
+_REASONING_MODEL_SUBSTRINGS = (
+    "qwen",
+    "deepseek-r1",
+    "deepseek/r1",
+    "r1-",
+    "gpt-oss",   # openai/gpt-oss-120b and variants — emit <think> blocks via Groq
+    "o1-",       # openai o1-mini, o1-preview, o1 — reasoning models
+)
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model is a chain-of-thought reasoning model that emits
+    <think> tokens before the final answer."""
+    m = model.lower()
+    return any(sub in m for sub in _REASONING_MODEL_SUBSTRINGS)
+
+
 def _is_quota_exhausted(exc: BaseException) -> bool:
     """Provider quota errors that retrying cannot fix inside one run -
     daily/minute token caps. Rotating to another API key CAN help here."""
@@ -415,6 +437,20 @@ class LLMRouter:
             client = self._groq_client(keys[key_index])
             assert isinstance(client, Groq)
             try:
+                # Reasoning models (Qwen3, DeepSeek-R1) emit <think> tokens
+                # before the final answer. Groq's server-side JSON validation
+                # treats the full output — thinking tokens included — as JSON
+                # and returns json_validate_failed (400). Skip json_object mode
+                # for these models; the prompt already instructs JSON output and
+                # _extract_json handles stripping the thinking block client-side.
+                use_json_mode = json_mode and not _is_reasoning_model(model)
+                # Build kwargs conditionally: omit response_format entirely when
+                # not needed. The Groq SDK uses a NOT_GIVEN sentinel internally;
+                # explicitly passing None sends "response_format": null in the
+                # request body, which some models reject with a 400 error.
+                extra: dict = {}
+                if use_json_mode:
+                    extra["response_format"] = {"type": "json_object"}
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -423,7 +459,7 @@ class LLMRouter:
                     ],
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    response_format={"type": "json_object"} if json_mode else None,
+                    **extra,
                 )
             except Exception as exc:
                 if not _is_quota_exhausted(exc) or offset == len(keys) - 1:
@@ -441,8 +477,16 @@ class LLMRouter:
                 continue
             text = response.choices[0].message.content or ""
             usage = response.usage
-            in_tok = usage.prompt_tokens if usage else _approx_tokens(system + user)
-            out_tok = usage.completion_tokens if usage else _approx_tokens(text)
+            in_tok = (
+                usage.prompt_tokens
+                if usage and usage.prompt_tokens is not None
+                else _approx_tokens(system + user)
+            )
+            out_tok = (
+                usage.completion_tokens
+                if usage and usage.completion_tokens is not None
+                else _approx_tokens(text)
+            )
             return text, in_tok, out_tok
 
         assert last_quota_error is not None
@@ -561,8 +605,12 @@ class LLMRouter:
 
 
 def _extract_json(text: str) -> str:
-    """Strip markdown fences / pre-amble around a JSON object."""
+    """Strip markdown fences, thinking blocks, and pre-amble around a JSON object."""
     stripped = text.strip()
+    # Reasoning models (Qwen3, DeepSeek-R1) wrap their thinking in <think>...</think>.
+    # Strip those blocks first so the JSON parser only sees the final answer.
+    import re as _re
+    stripped = _re.sub(r"<think>[\s\S]*?</think>", "", stripped, flags=_re.IGNORECASE).strip()
     # Fast path: starts with a JSON object
     if stripped.startswith("{"):
         # Find the first balanced JSON object to avoid greedy regex issues

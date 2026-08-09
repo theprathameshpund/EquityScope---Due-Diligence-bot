@@ -1,59 +1,209 @@
-# EquityscopeUi
+# 🎨 EquityScope Frontend
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 20.3.27.
+> **Modern Angular frontend for EquityScope — an AI-powered financial due diligence platform that enables analysts to interact with multi-agent AI workflows, analyze companies, and generate citation-backed investment reports.**
 
-## Development server
+![Angular](https://img.shields.io/badge/Angular-20-red)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
+![Status](https://img.shields.io/badge/Status-Active-success)
 
-To start a local development server, run:
+---
+
+# 📖 Overview
+
+The EquityScope frontend provides a clean and responsive interface for interacting with the AI-powered due diligence platform.
+
+Users can:
+
+- 🔍 Search and analyze public companies
+- 📄 Submit financial due diligence requests
+- 🤖 Interact with AI-generated investment insights
+- 📑 View citation-backed research reports
+- 📊 Explore financial summaries and supporting evidence
+
+The frontend communicates with the FastAPI backend through REST APIs and provides a seamless experience for enterprise financial research.
+
+---
+
+# ✨ Features
+
+- 📊 Modern Dashboard UI
+- 🔍 Company Search
+- 🤖 AI-Powered Due Diligence Interface
+- 📄 Citation-Based Report Viewer
+- ⚡ Fast & Responsive Design
+- 📱 Responsive Layout
+- 🔗 REST API Integration
+- 🐳 Docker Support
+
+---
+
+# 🏗 Frontend Architecture
+
+```
+User
+   │
+   ▼
+Angular UI
+   │
+   ▼
+Services
+   │
+   ▼
+REST API
+   │
+   ▼
+FastAPI Backend
+```
+
+---
+
+# 🛠 Tech Stack
+
+- Angular 20
+- TypeScript
+- RxJS
+- Angular Router
+- HTTP Client
+- Docker
+- Nginx (Production)
+
+---
+
+# 📂 Project Structure
+
+```
+src/
+├── app/
+│   ├── components/
+│   ├── pages/
+│   ├── services/
+│   ├── models/
+│   ├── guards/
+│   ├── interceptors/
+│   └── shared/
+│
+├── assets/
+├── environments/
+└── styles/
+```
+
+---
+
+# 🚀 Getting Started
+
+## Install Dependencies
+
+```bash
+npm install
+```
+
+---
+
+## Start Development Server
+
+```bash
+npm start
+```
+
+or
 
 ```bash
 ng serve
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+Application will be available at:
 
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
+```
+http://localhost:4200
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+---
 
-```bash
-ng generate --help
+# 🔗 Backend Configuration
+
+The frontend communicates with the FastAPI backend.
+
+Default API endpoint:
+
+```
+http://localhost:8000
 ```
 
-## Building
+Proxy configuration is provided through:
 
-To build the project run:
+```
+proxy.conf.json
+```
+
+---
+
+# 📦 Production Build
 
 ```bash
 ng build
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+The optimized production build will be generated inside:
 
-## Running unit tests
-
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
-
-```bash
-ng test
+```
+dist/
 ```
 
-## Running end-to-end tests
+---
 
-For end-to-end (e2e) testing, run:
+# 🐳 Docker
+
+Build the frontend container:
 
 ```bash
-ng e2e
+docker build -t equityscope-ui .
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+Run:
 
-## Additional Resources
+```bash
+docker run -p 4200:80 equityscope-ui
+```
 
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+---
+
+# 📸 Screenshots
+
+> Add application screenshots here.
+
+Example:
+
+- Dashboard
+- Company Search
+- AI Report
+- Financial Summary
+- Research Workflow
+
+---
+
+# 🔮 Future Improvements
+
+- Dark Mode
+- Interactive Financial Charts
+- Real-Time Report Generation
+- Company Comparison Dashboard
+- Report Export (PDF)
+- User Authentication
+- Portfolio Tracking
+- AI Chat Interface
+
+---
+
+# 📄 Related Documentation
+
+- 📦 Backend Documentation → `../backend/README.md`
+- 🚀 Root Project README → `../README.md`
+
+---
+
+# 👨‍💻 Author
+
+**Prathamesh Pund**
+
+AI Engineer focused on Enterprise AI, Multi-Agent Systems, Generative AI, and Intelligent Automation.

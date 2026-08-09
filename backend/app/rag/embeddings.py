@@ -27,6 +27,9 @@ _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 _embedder_lock = Lock()
 _embedder_instance: SentenceTransformer | None = None
 
+_cross_encoder_lock = Lock()
+_cross_encoder_instances: dict[str, "CrossEncoder"] = {}
+
 
 @lru_cache(maxsize=1)
 def get_embedder() -> SentenceTransformer:
@@ -60,12 +63,38 @@ def get_embedder() -> SentenceTransformer:
         return _embedder_instance
 
 
-@lru_cache(maxsize=2)
 def get_cross_encoder(model_name: str) -> CrossEncoder:
-    from sentence_transformers import CrossEncoder
+    """Load a CrossEncoder exactly once per model name, thread-safely.
 
-    log.info("loading_cross_encoder", model=model_name)
-    return cast("CrossEncoder", CrossEncoder(model_name, device=settings.embedding_device))
+    Uses an explicit lock + instance cache instead of @lru_cache so that
+    concurrent critic threads don't race to load the same ~500 MB model
+    simultaneously (which on Windows triggers os error 1455 / paging-file
+    exhaustion when two threads both try to mmap the weights at the same time).
+    """
+    if model_name in _cross_encoder_instances:
+        return _cross_encoder_instances[model_name]
+
+    with _cross_encoder_lock:
+        # Double-checked locking: another thread may have loaded it while we waited.
+        if model_name in _cross_encoder_instances:
+            return _cross_encoder_instances[model_name]
+
+        from sentence_transformers import CrossEncoder
+
+        log.info("loading_cross_encoder", model=model_name)
+        # max_length=512 caps tokenisation to the model's true context window,
+        # preventing large allocations when long filing chunks are passed in.
+        model = cast(
+            "CrossEncoder",
+            CrossEncoder(
+                model_name,
+                device=settings.embedding_device,
+                max_length=512,
+            ),
+        )
+        _cross_encoder_instances[model_name] = model
+        log.info("cross_encoder_ready", model=model_name)
+        return model
 
 
 def embedding_dim() -> int:
