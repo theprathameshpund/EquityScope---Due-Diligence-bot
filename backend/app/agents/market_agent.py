@@ -34,6 +34,38 @@ class _Peers(BaseModel):
     tickers: list[str] = Field(min_length=1, max_length=5)
 
 
+PEER_FALLBACKS: dict[str, list[str]] = {
+    "AMZN": ["WMT", "COST", "TGT", "EBAY", "BABA"],
+    "WMT": ["COST", "TGT", "AMZN", "DG", "KR"],
+    "MSFT": ["AAPL", "GOOGL", "ORCL", "CRM", "ADBE"],
+    "GOOGL": ["META", "MSFT", "AMZN", "AAPL", "SNAP"],
+    "META": ["GOOGL", "SNAP", "PINS", "MSFT", "AMZN"],
+    "AAPL": ["MSFT", "GOOGL", "DELL", "HPQ", "SONY"],
+    "TSLA": ["GM", "F", "TM", "RIVN", "NIO"],
+    "NVDA": ["AMD", "INTC", "AVGO", "QCOM", "TSM"],
+}
+
+
+def _fallback_peers(state: AgentState) -> list[str]:
+    ticker = state.ticker.upper()
+    if ticker in PEER_FALLBACKS:
+        return PEER_FALLBACKS[ticker]
+    sector = (state.market.sector if state.market else "").lower()
+    if "technology" in sector:
+        return ["MSFT", "AAPL", "GOOGL", "ORCL", "ADBE"]
+    if "consumer defensive" in sector or "consumer staples" in sector:
+        return ["WMT", "COST", "TGT", "KR", "DG"]
+    if "consumer cyclical" in sector or "retail" in sector:
+        return ["AMZN", "WMT", "COST", "TGT", "EBAY"]
+    if "communication" in sector:
+        return ["GOOGL", "META", "NFLX", "DIS", "SNAP"]
+    if "health" in sector:
+        return ["JNJ", "PFE", "MRK", "ABBV", "LLY"]
+    if "financial" in sector:
+        return ["JPM", "BAC", "WFC", "GS", "MS"]
+    return ["MSFT", "AAPL", "AMZN", "GOOGL", "JPM"]
+
+
 def _suggest_peers(router: LLMRouter, state: AgentState) -> list[str]:
     system = load_prompt("peer_suggest").format(
         company=state.company_name, ticker=state.ticker
@@ -42,10 +74,12 @@ def _suggest_peers(router: LLMRouter, state: AgentState) -> list[str]:
         result = router.complete_json(
             "fast", system, "List the 3-5 peer tickers.", _Peers, max_tokens=80
         )
-    except ValueError:
-        return []
+    except Exception as exc:
+        log.warning("peer_suggest_failed_using_fallback", ticker=state.ticker, error=str(exc)[:200])
+        return [t for t in _fallback_peers(state) if t != state.ticker.upper()][:5]
     cleaned = [t.strip().upper() for t in result.tickers if t.strip()]
-    return [t for t in cleaned if t != state.ticker.upper()][:5]
+    peers = [t for t in cleaned if t != state.ticker.upper()][:5]
+    return peers or [t for t in _fallback_peers(state) if t != state.ticker.upper()][:5]
 
 
 def _compute_scorecard(
@@ -99,10 +133,13 @@ def _compute_scorecard(
 
     # ── 3. Profitability (5=highly profitable, 1=loss-making) ──
     fcf_margin = _metric("fcf_margin")
-    net_margin_key = next(
-        (k for k in ["net_margin_fy2024", "net_margin_fy2023", "net_margin_fy2022"]
-         if _metric(k) is not None), None
-    )
+    net_margin_key: str | None = None
+    if analysis is not None:
+        net_margin_ids = sorted(
+            (m.metric_id for m in analysis.metrics if m.metric_id.startswith("net_margin_fy")),
+            reverse=True,
+        )
+        net_margin_key = net_margin_ids[0] if net_margin_ids else None
     nm = _metric(net_margin_key) if net_margin_key else None
     margin = fcf_margin if fcf_margin is not None else nm
     if margin is not None:
@@ -123,20 +160,30 @@ def _compute_scorecard(
     # ── 4. Financial Health (5=fortress balance sheet, 1=distressed) ──
     current_ratio = _metric("current_ratio")
     debt_ebitda = _metric("debt_to_ebitda")
+    fcf_abs = _metric("fcf")
     if current_ratio is not None or debt_ebitda is not None:
         score = 3  # default
         parts = []
         if current_ratio is not None:
-            if current_ratio >= 2.0:
-                score = min(score + 1, 5); parts.append(f"current ratio {current_ratio:.2f}x")
+            if current_ratio >= 1.5:
+                score = min(score + 1, 5)
+                parts.append(f"current ratio {current_ratio:.2f}x (comfortable liquidity)")
             elif current_ratio < 1.0:
-                score = max(score - 1, 1); parts.append(f"current ratio {current_ratio:.2f}x (<1)")
+                score = max(score - 1, 1)
+                parts.append(f"current ratio {current_ratio:.2f}x (<1, liquidity pressure)")
+            else:
+                parts.append(f"current ratio {current_ratio:.2f}x (adequate)")
         if debt_ebitda is not None:
             if debt_ebitda <= 1.0:
-                score = min(score + 1, 5); parts.append(f"net debt/EBITDA {debt_ebitda:.1f}x")
+                score = min(score + 1, 5); parts.append(f"low leverage {debt_ebitda:.1f}x debt/EBITDA")
             elif debt_ebitda >= 4.0:
-                score = max(score - 1, 1); parts.append(f"high leverage {debt_ebitda:.1f}x")
-        note = "; ".join(parts) if parts else "Moderate balance sheet"
+                score = max(score - 1, 1); parts.append(f"high leverage {debt_ebitda:.1f}x debt/EBITDA")
+        else:
+            parts.append("no debt/EBITDA computable (leverage credit unavailable)")
+        if fcf_abs is not None and fcf_abs > 0:
+            parts.append("positive free cash flow")
+        # Rationale must always explain the score — unexplained scores are unauditable.
+        note = "; ".join(parts) if parts else "Moderate balance sheet (no liquidity/leverage inputs)"
         mids = [m for m in ["current_ratio", "debt_to_ebitda"] if _metric(m) is not None]
         dimensions.append(ScorecardDimension(name="Financial Health", score=score,
                                              rationale=note, metric_ids=mids))
@@ -165,6 +212,11 @@ def _compute_scorecard(
                 note = f"1Y return {change:+.1f}%; elevated short interest {short_pct:.1f}%"
             else:
                 note = f"1Y price return {change:+.1f}%"
+            if change > 80:
+                note += (
+                    " — caveat: an extended move of this size is also a mean-reversion "
+                    "risk, not purely a strength"
+                )
             dimensions.append(ScorecardDimension(name="Market Momentum", score=score,
                                                  rationale=note))
 
@@ -218,12 +270,20 @@ def market_node(state: AgentState) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     data_gaps: list[str] = []
 
+    log.info("market_node_start", ticker=state.ticker)
     try:
+        log.info("market_snapshot_start", ticker=state.ticker)
         snapshot = get_snapshot(state.ticker)
+        log.info("market_snapshot_end", ticker=state.ticker, available=snapshot.available)
+        log.info("market_peers_start", ticker=state.ticker)
         snapshot.peers = get_peer_multiples(_suggest_peers(router, state))
+        log.info("market_peers_end", ticker=state.ticker, peers=len(snapshot.peers))
+        log.info("market_macro_start")
         snapshot.macro_notes = get_macro_notes()
+        log.info("market_macro_end", notes=len(snapshot.macro_notes))
 
         try:
+            log.info("market_summary_start", ticker=state.ticker)
             data = snapshot.model_dump(mode="json", exclude={"summary", "available", "error"})
             response = router.complete(
                 "fast",
@@ -232,6 +292,7 @@ def market_node(state: AgentState) -> dict[str, Any]:
                 max_tokens=200,
             )
             snapshot.summary = response.text.strip()
+            log.info("market_summary_end", ticker=state.ticker, chars=len(snapshot.summary))
         except Exception as exc:
             log.warning("market_summary_failed", error=str(exc))
 
@@ -244,7 +305,9 @@ def market_node(state: AgentState) -> dict[str, Any]:
 
     # Insider activity (best effort)
     try:
+        log.info("insider_activity_start", ticker=state.ticker)
         insider = get_insider_activity(state.ticker)
+        log.info("insider_activity_end", ticker=state.ticker, available=insider.available)
         updates["insider_activity"] = insider
         if not insider.available:
             data_gaps.append(f"Insider activity unavailable: {insider.error}")
@@ -255,12 +318,15 @@ def market_node(state: AgentState) -> dict[str, Any]:
     # Investment scorecard (computed after analysis is done — we'll recompute
     # in analyst_agent if analysis is not yet available, but compute here
     # with market data only for immediate use)
+    log.info("scorecard_compute_start", ticker=state.ticker)
     scorecard = _compute_scorecard(
         snapshot if snapshot.available else None,
         state.analysis,  # may be None at this point; analyst_agent will recompute
     )
     updates["scorecard"] = scorecard
+    log.info("scorecard_compute_end", ticker=state.ticker, available=scorecard.available)
 
     if data_gaps:
         updates["data_gaps"] = data_gaps
+    log.info("market_node_end", ticker=state.ticker, data_gaps=len(data_gaps))
     return updates

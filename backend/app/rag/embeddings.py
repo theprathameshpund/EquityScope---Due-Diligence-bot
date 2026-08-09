@@ -1,9 +1,10 @@
-﻿"""Local sentence-transformers embeddings, batched, lazily loaded."""
+"""Local sentence-transformers embeddings, batched, lazily loaded."""
 
 from __future__ import annotations
 
 import os
 from functools import lru_cache
+from time import perf_counter
 from threading import Lock
 from typing import TYPE_CHECKING, cast
 
@@ -25,6 +26,9 @@ _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 _embedder_lock = Lock()
 _embedder_instance: SentenceTransformer | None = None
+
+_cross_encoder_lock = Lock()
+_cross_encoder_instances: dict[str, "CrossEncoder"] = {}
 
 
 @lru_cache(maxsize=1)
@@ -59,12 +63,38 @@ def get_embedder() -> SentenceTransformer:
         return _embedder_instance
 
 
-@lru_cache(maxsize=2)
 def get_cross_encoder(model_name: str) -> CrossEncoder:
-    from sentence_transformers import CrossEncoder
+    """Load a CrossEncoder exactly once per model name, thread-safely.
 
-    log.info("loading_cross_encoder", model=model_name)
-    return cast("CrossEncoder", CrossEncoder(model_name, device=settings.embedding_device))
+    Uses an explicit lock + instance cache instead of @lru_cache so that
+    concurrent critic threads don't race to load the same ~500 MB model
+    simultaneously (which on Windows triggers os error 1455 / paging-file
+    exhaustion when two threads both try to mmap the weights at the same time).
+    """
+    if model_name in _cross_encoder_instances:
+        return _cross_encoder_instances[model_name]
+
+    with _cross_encoder_lock:
+        # Double-checked locking: another thread may have loaded it while we waited.
+        if model_name in _cross_encoder_instances:
+            return _cross_encoder_instances[model_name]
+
+        from sentence_transformers import CrossEncoder
+
+        log.info("loading_cross_encoder", model=model_name)
+        # max_length=512 caps tokenisation to the model's true context window,
+        # preventing large allocations when long filing chunks are passed in.
+        model = cast(
+            "CrossEncoder",
+            CrossEncoder(
+                model_name,
+                device=settings.embedding_device,
+                max_length=512,
+            ),
+        )
+        _cross_encoder_instances[model_name] = model
+        log.info("cross_encoder_ready", model=model_name)
+        return model
 
 
 def embedding_dim() -> int:
@@ -75,29 +105,60 @@ def embedding_dim() -> int:
 
 
 def embed_passages(texts: list[str], batch_size: int = 32) -> list[list[float]]:
-    """Embed document chunks (no instruction prefix), L2-normalized.
-    
-    Uses bge-small-en-v1.5 for speed (~10x faster than bge-large).
-    Progress is logged for large batches.
-    """
+    """Embed document chunks (no instruction prefix), L2-normalized."""
     if not texts:
+        log.info("embedding_passages_skip", reason="no_texts")
         return []
-    # Log progress for batches that will take a while
-    total_batches = (len(texts) + batch_size - 1) // batch_size
-    if total_batches > 5:
-        log.info("embedding_passages_start", total_chunks=len(texts), batch_size=batch_size, total_batches=total_batches)
-    
-    vectors = get_embedder().encode(
-        texts,
+
+    total = len(texts)
+    total_batches = (total + batch_size - 1) // batch_size
+    log.info(
+        "embedding_passages_start",
+        total_chunks=total,
         batch_size=batch_size,
-        normalize_embeddings=True,
-        show_progress_bar=False,
+        total_batches=total_batches,
+        model=settings.embedding_model,
+        device=settings.embedding_device,
     )
-    
-    if total_batches > 5:
-        log.info("embedding_passages_complete", total_chunks=len(texts))
-    
-    return cast("list[list[float]]", vectors.tolist())
+
+    embedder = get_embedder()
+    vectors_out: list[list[float]] = []
+    started = perf_counter()
+    for batch_index, start in enumerate(range(0, total, batch_size), 1):
+        batch = texts[start : start + batch_size]
+        batch_started = perf_counter()
+        log.info(
+            "embedding_batch_start",
+            batch=batch_index,
+            total_batches=total_batches,
+            chunk_start=start + 1,
+            chunk_end=start + len(batch),
+            batch_size=len(batch),
+        )
+        batch_vectors = embedder.encode(
+            batch,
+            batch_size=len(batch),
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        rows = batch_vectors.tolist() if hasattr(batch_vectors, "tolist") else batch_vectors
+        vectors_out.extend(cast("list[list[float]]", rows))
+        log.info(
+            "embedding_batch_end",
+            batch=batch_index,
+            total_batches=total_batches,
+            embedded=len(vectors_out),
+            total_chunks=total,
+            seconds=round(perf_counter() - batch_started, 2),
+        )
+
+    log.info(
+        "embedding_passages_complete",
+        total_chunks=total,
+        total_batches=total_batches,
+        seconds=round(perf_counter() - started, 2),
+    )
+    return vectors_out
 
 
 def embed_query(query: str) -> list[float]:

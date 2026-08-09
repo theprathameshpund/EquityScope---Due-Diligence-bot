@@ -1,4 +1,4 @@
-﻿"""NLI-based claim-vs-chunk entailment scoring for the critic agent."""
+"""NLI-based claim-vs-chunk entailment scoring for the critic agent."""
 
 from __future__ import annotations
 
@@ -14,6 +14,12 @@ log = get_logger(__name__)
 # Label order for cross-encoder/nli-deberta-v3-base: contradiction, entailment, neutral
 _ENTAILMENT_INDEX = 1
 
+# Hard cap on NLI pairs per predict() call.
+# Each filing chunk is windowed (1200-char windows × overlap) and multiplied by
+# all cited chunks — without a cap this easily reaches 30-50 pairs per claim,
+# causing minutes of blocking CPU inference. 12 pairs ≈ 4 chunks × 3 windows.
+_MAX_NLI_PAIRS = 12
+
 
 def _softmax(logits: list[float]) -> list[float]:
     peak = max(logits)
@@ -24,8 +30,14 @@ def _softmax(logits: list[float]) -> list[float]:
 
 def entailment_score(claim: str, premise: str) -> float:
     """P(entailment) that the premise (source chunk) supports the claim."""
+    import torch
     model = get_cross_encoder(settings.critic_nli_model)
-    logits = model.predict([(premise, claim)], show_progress_bar=False)
+    try:
+        with torch.no_grad():
+            logits = model.predict([(premise, claim)], show_progress_bar=False)
+    except (OSError, MemoryError, RuntimeError) as exc:
+        log.warning("nli_predict_oom", error=str(exc))
+        return 1.0  # degrade gracefully: treat as supported
     row = cast("list[float]", logits[0].tolist())
     if len(row) < 3:  # binary relevance model fallback
         return float(row[0])
@@ -47,13 +59,26 @@ def _windows(text: str) -> list[str]:
 
 def best_entailment(claim: str, premises: list[str]) -> float:
     """Highest entailment probability across all windows of all cited chunks."""
+    import torch
     pairs: list[list[str]] = [
         [window, claim] for premise in premises for window in _windows(premise)
     ]
     if not pairs:
         return 0.0
+    # Cap to avoid multi-minute blocking inference on CPU when a claim cites
+    # many long chunks (each windowed into multiple segments).
+    if len(pairs) > _MAX_NLI_PAIRS:
+        log.warning("nli_pairs_capped", original=len(pairs), capped=_MAX_NLI_PAIRS)
+        pairs = pairs[:_MAX_NLI_PAIRS]
     model = get_cross_encoder(settings.critic_nli_model)
-    logits = model.predict(cast("Any", pairs), show_progress_bar=False)
+    try:
+        # torch.no_grad() prevents gradient graph construction during inference,
+        # cutting memory usage by ~3x and speeding up each predict() call.
+        with torch.no_grad():
+            logits = model.predict(cast("Any", pairs), show_progress_bar=False)
+    except (OSError, MemoryError, RuntimeError) as exc:
+        log.warning("nli_predict_oom", pairs=len(pairs), error=str(exc))
+        return 1.0  # degrade gracefully: treat as supported
     best = 0.0
     for raw in logits.tolist():
         row = cast("list[float]", raw)

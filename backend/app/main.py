@@ -1,4 +1,4 @@
-﻿"""FastAPI app factory with lifespan and health checks."""
+"""FastAPI app factory with lifespan and health checks."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +74,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 log.info("embedding_model_ready", dimension=dim)
             except Exception as exc:
                 log.warning("embedding_model_preload_failed", error=str(exc))
+
+            # Also pre-warm the NLI cross-encoder used by the critic agent.
+            # Loading the ~500 MB DeBERTa model eagerly at startup (when memory
+            # is free) prevents Windows paging-file OOM (os error 1455) that
+            # occurs when the model is first loaded mid-run under memory pressure.
+            try:
+                from app.rag.embeddings import get_cross_encoder
+
+                log.info("preloading_nli_model", model=settings.critic_nli_model)
+                get_cross_encoder(settings.critic_nli_model)
+                log.info("nli_model_ready", model=settings.critic_nli_model)
+            except Exception as exc:
+                log.warning("nli_model_preload_failed", error=str(exc))
 
         asyncio.create_task(asyncio.to_thread(_background_preload_embeddings))
     
@@ -196,9 +210,11 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "app.main:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=True,
+        reload_dirs=[str(Path(__file__).resolve().parent)],
     )

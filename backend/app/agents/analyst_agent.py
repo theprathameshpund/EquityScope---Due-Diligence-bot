@@ -157,6 +157,80 @@ def _write_commentary(
     return claims
 
 
+def _fallback_management_questions(state: AgentState, analysis: FinancialAnalysis) -> list[str]:
+    """Metric-driven questions when the LLM is unavailable.
+
+    Built from this run's own computed values so they are company-specific,
+    never generic boilerplate that fits any ticker.
+    """
+    company = state.company_name or state.ticker
+    by_id = {m.metric_id: m for m in analysis.metrics}
+    questions: list[str] = []
+
+    # Topics with a dedicated question below — skip their anomaly duplicates.
+    dedicated_topics = ("capex intensity", "operating margin", "cash conversion")
+    for anomaly in analysis.anomalies:
+        if len(questions) >= 2:
+            break
+        if any(topic in anomaly.lower() for topic in dedicated_topics):
+            continue
+        # Rephrase as a clean question: strip the flag's trailing punctuation
+        # and any appended "— consequence" tail so no ".?" artifacts leak.
+        core = anomaly.split("—")[0].strip().rstrip(".;,")
+        if core:
+            questions.append(f"What explains this: {core}?")
+
+    om_trend = by_id.get("operating_margin_trend_bps")
+    if om_trend is not None:
+        if om_trend.value > 0:
+            questions.append(
+                f"What drove the {om_trend.value:+,.0f} bps operating-margin expansion in "
+                f"{om_trend.period.split('->')[-1]}, and how much of it is sustainable?"
+            )
+        else:
+            questions.append(
+                f"What is the plan to reverse the {abs(om_trend.value):,.0f} bps operating-margin "
+                f"contraction in {om_trend.period.split('->')[-1]}?"
+            )
+    capex = by_id.get("capex_intensity")
+    fcf_margin = by_id.get("fcf_margin")
+    if capex is not None and fcf_margin is not None:
+        questions.append(
+            f"With capex at {capex.value:.1f}% of revenue, how will investment plans affect the "
+            f"{fcf_margin.value:.1f}% free-cash-flow margin over the next 2-3 years?"
+        )
+    growth = by_id.get("revenue_growth_yoy")
+    cagr = by_id.get("revenue_cagr_3y")
+    if growth is not None:
+        cagr_part = f" versus the {cagr.value:.1f}% 3-year CAGR" if cagr is not None else ""
+        questions.append(
+            f"Which segments and demand drivers underpin the {growth.value:.1f}% revenue growth in "
+            f"{growth.period}{cagr_part}, and where is deceleration most likely?"
+        )
+    dilution = by_id.get("share_dilution")
+    if dilution is not None and dilution.value < 0:
+        questions.append(
+            f"After reducing the diluted share count {abs(dilution.value):.1f}% over {dilution.period}, "
+            "how is capital allocation prioritized among buybacks, dividends, capex, and M&A?"
+        )
+    cash_conv = by_id.get("cash_conversion")
+    if cash_conv is not None and cash_conv.value < 1.0:
+        questions.append(
+            f"Why is cash conversion only {cash_conv.value:.2f}x, and when will operating cash flow "
+            "catch up with reported earnings?"
+        )
+    questions.append(
+        f"What legal, regulatory, antitrust, or litigation developments could materially change "
+        f"{company}'s outlook, and what remedies or contingencies are being prepared?"
+    )
+    if state.data_gaps:
+        questions.append(
+            "Which of the publicly unavailable data fields noted in this report can management "
+            "provide directly (segment detail, concentration, guidance)?"
+        )
+    return questions[:8]
+
+
 def _generate_management_questions(
     router: LLMRouter, state: AgentState, analysis: FinancialAnalysis
 ) -> list[str]:
@@ -167,8 +241,10 @@ def _generate_management_questions(
         "anomalies": analysis.anomalies,
         "data_gaps": state.data_gaps,
         "metrics_summary": [
-            {"id": m.metric_id, "name": m.name, "value": m.value, "unit": m.unit}
-            for m in analysis.metrics[:15]
+            {"id": m.metric_id, "name": m.name, "value": m.value, "unit": m.unit,
+             "period": m.period}
+            # Latest periods first so questions anchor to current-year trends.
+            for m in sorted(analysis.metrics, key=lambda m: m.period, reverse=True)[:15]
         ],
     }
     system = load_prompt("management_questions").format(company=state.company_name)
@@ -178,8 +254,8 @@ def _generate_management_questions(
         )
         return [q.strip() for q in result.questions if q.strip()][:8]
     except Exception as exc:
-        log.warning("management_questions_failed", error=str(exc))
-        return []
+        log.warning("management_questions_failed_using_fallback", error=str(exc)[:200])
+        return _fallback_management_questions(state, analysis)
 
 
 def _recompute_scorecard(analysis: FinancialAnalysis, state: AgentState) -> InvestmentScorecard:
@@ -202,12 +278,15 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
     All numbers are deterministic; the LLM only writes commentary referencing
     pre-computed metric IDs.
     """
+    log.info("analyst_node_start", ticker=state.ticker, cik=state.cik)
     data_gaps: list[str] = []
     facts = state.facts
 
     if facts is None:
         try:
+            log.info("financial_facts_fetch_start", cik=state.cik)
             facts = fetch_financial_facts(state.cik)
+            log.info("financial_facts_fetch_end", cik=state.cik)
         except Exception as exc:
             log.warning("xbrl_unavailable", cik=state.cik, error=str(exc))
             data_gaps.append(
@@ -215,7 +294,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
                 f"(CIK {state.cik}): {exc}"
             )
             # Fallback: build from Yahoo Finance (works for ADRs / foreign issuers)
+            log.info("yfinance_fallback_start", ticker=state.ticker)
             facts = _facts_from_yfinance(state.ticker, state.cik)
+            log.info("yfinance_fallback_end", ticker=state.ticker, available=facts is not None)
             if facts is None:
                 data_gaps.append(
                     f"Yahoo Finance financial fallback also returned no data for {state.ticker}. "
@@ -228,7 +309,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
                 "Source: https://finance.yahoo.com/quote/" + state.ticker
             )
 
+    log.info("financial_metrics_compute_start", ticker=state.ticker)
     analysis = compute_metrics(facts)
+    log.info("financial_metrics_compute_end", ticker=state.ticker, metrics=len(analysis.metrics), anomalies=len(analysis.anomalies))
     if not analysis.metrics:
         data_gaps.append(
             "No computable financial metrics found. "
@@ -241,13 +324,17 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
 
     router = LLMRouter(state.run_id)
     try:
+        log.info("analyst_commentary_start", ticker=state.ticker)
         analysis.commentary = _write_commentary(router, state, analysis)
+        log.info("analyst_commentary_end", ticker=state.ticker, chars=len(analysis.commentary))
     except Exception as exc:
         log.warning("analyst_commentary_skipped", error=str(exc))
 
     # Recompute scorecard with full financial metrics now available.
     try:
+        log.info("analyst_scorecard_start", ticker=state.ticker)
         scorecard = _recompute_scorecard(analysis, state)
+        log.info("analyst_scorecard_end", ticker=state.ticker, available=scorecard.available)
     except Exception as exc:
         log.warning("scorecard_recompute_failed", error=str(exc))
         scorecard = state.scorecard  # keep the market-only version
@@ -255,7 +342,9 @@ def analyst_node(state: AgentState) -> dict[str, Any]:
     # Generate management questions from anomalies + data gaps.
     management_questions: list[str] = []
     try:
+        log.info("management_questions_start", ticker=state.ticker)
         management_questions = _generate_management_questions(router, state, analysis)
+        log.info("management_questions_end", ticker=state.ticker, questions=len(management_questions))
     except Exception as exc:
         log.warning("management_questions_skipped", error=str(exc))
 

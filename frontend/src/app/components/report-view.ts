@@ -54,6 +54,12 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
         </div>
       </div>
 
+      @if (report.metadata.partial) {
+        <p class="gap"><app-icon name="alert" [size]="13" />
+          PARTIAL RUN — prose generation did not fully complete; sections were built from
+          deterministic data only and rating authority is capped.
+        </p>
+      }
       <h2 class="title">Due diligence report</h2>
       <p class="subtitle">
         {{ report.company.name }}
@@ -286,7 +292,7 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
 
       <section id="sec-risk">
         <h3><span class="no">{{ sectionNo('sec-risk') }}</span> Risk matrix</h3>
-        @if (!report.risk_matrix.length) { <p class="note">No risks identified.</p> }
+        @if (!report.risk_matrix.length) { <p class="note">Insufficient data for this section: risk matrix requires at least three verified or structural risks.</p> }
         <div class="risk-grid">
           @for (risk of report.risk_matrix; track risk.title) {
             <div class="risk sev-{{ risk.severity }}">
@@ -316,7 +322,7 @@ const METRIC_GROUP_RULES: { name: string; match: RegExp }[] = [
         <section id="sec-flags">
           <h3><span class="no">{{ sectionNo('sec-flags') }}</span> Red flags</h3>
           @if (!report.red_flags.length) {
-            <p class="note">No red flags surfaced by this run.</p>
+            <p class="note">No material red flags identified based on available data.</p>
           }
           @for (flag of report.red_flags; track flag.claim_id) {
             <div class="flag-band">
@@ -776,6 +782,8 @@ export class ReportViewComponent {
     const v = this.data().report?.valuation;
     if (!v) return [];
     const tiles: { label: string; value: string }[] = [];
+    if (v.price != null) tiles.push({ label: 'Price', value: '$' + v.price.toFixed(2) });
+    if (v.market_cap != null) tiles.push({ label: 'Market cap', value: '$' + (v.market_cap / 1e9).toFixed(1) + 'B' });
     if (v.pe_ttm != null) tiles.push({ label: 'Trailing P/E', value: v.pe_ttm.toFixed(1) + 'x' });
     if (v.forward_pe != null) tiles.push({ label: 'Forward P/E', value: v.forward_pe.toFixed(1) + 'x' });
     if (v.ev_to_ebitda != null) tiles.push({ label: 'EV/EBITDA', value: v.ev_to_ebitda.toFixed(1) + 'x' });
@@ -783,9 +791,19 @@ export class ReportViewComponent {
     if (v.price_to_book != null) tiles.push({ label: 'P/Book', value: v.price_to_book.toFixed(1) + 'x' });
     if (v.beta != null) tiles.push({ label: 'Beta', value: v.beta.toFixed(2) });
     if (v.dividend_yield != null) tiles.push({ label: 'Dividend yield', value: (v.dividend_yield * 100).toFixed(2) + '%' });
-    if (v.short_percent_float != null) tiles.push({ label: 'Short interest', value: (v.short_percent_float * 100).toFixed(1) + '%' });
+    if (v.short_percent_float != null) {
+      const asOf = v.short_interest_date ? `, as of ${v.short_interest_date}` : '';
+      tiles.push({ label: `Short interest (% of float${asOf})`, value: (v.short_percent_float * 100).toFixed(2) + '%' });
+    }
     return tiles;
   });
+
+  /** Valuation multiple with the n.m. convention for negative denominators. */
+  multiple(value: number | null | undefined): string {
+    if (value == null) return '—';
+    if (value <= 0) return 'n.m.';
+    return value.toFixed(1) + 'x';
+  }
 
   sectionNo(id: string): string {
     return this.nav().find((section) => section.id === id)?.no ?? '··';
@@ -899,18 +917,57 @@ export class ReportViewComponent {
     }
 
     const esc = (value: unknown): string => this.escapeHtml(String(value ?? ''));
-    const list = (items: string[]): string =>
-      items.length ? `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p class="muted">Data unavailable or unverifiable.</p>';
-    const claims = (items: Claim[]): string =>
+    const list = (items: string[], emptyText = 'No verified content for this section this run.'): string =>
+      items.length ? `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : `<p class="muted">${esc(emptyText)}</p>`;
+    const claims = (items: Claim[], emptyText = 'No verified claims for this section this run.'): string =>
       items.length
         ? `<ul class="claim-list">${items.map((claim) => `<li>${esc(claim.text)}${this.sourceBadges(claim)}</li>`).join('')}</ul>`
-        : '<p class="muted">Data unavailable or unverifiable.</p>';
+        : `<p class="muted">${esc(emptyText)}</p>`;
     const metrics = report.financial_health.table.metrics
       .map((metric) => `<tr><td>${esc(metric.name)}</td><td class="num">${esc(this.formatMetric(metric))}</td><td>${esc(metric.period)}</td></tr>`)
       .join('');
     const valuationRows = this.valuationTiles()
       .map((item) => `<tr><td>${esc(item.label)}</td><td class="num">${esc(item.value)}</td></tr>`)
       .join('');
+    const v = report.valuation;
+    const targetLine = v.target_mean != null
+      ? `<p>Analyst targets: mean $${esc(v.target_mean.toFixed(0))}${
+          v.target_low != null && v.target_high != null
+            ? ` (low $${esc(v.target_low.toFixed(0))} / high $${esc(v.target_high.toFixed(0))})`
+            : ''
+        }${v.num_analysts ? ` from ${esc(v.num_analysts)} analysts` : ''}${
+          v.price != null ? ` vs current price $${esc(v.price.toFixed(2))}` : ''
+        } — Yahoo Finance.</p>`
+      : '';
+    const peerRow = (label: string, pe: number | null, ps: number | null, ev: number | null, pb: number | null, bold = false): string =>
+      `<tr><td>${bold ? '<strong>' + esc(label) + ' (this report)</strong>' : '<strong>' + esc(label) + '</strong>'}</td>
+        <td class="num">${esc(this.multiple(pe))}</td>
+        <td class="num">${esc(this.multiple(ps))}</td>
+        <td class="num">${esc(this.multiple(ev))}</td>
+        <td class="num">${esc(this.multiple(pb))}</td></tr>`;
+    const peerRows = (v.peers ?? [])
+      .map((peer) => peerRow(peer.ticker, peer.pe_ttm, peer.price_to_sales, peer.ev_to_ebitda, peer.price_to_book))
+      .join('');
+    const peersTable = peerRows
+      ? `<h3>Peer comparison</h3><table><thead><tr><th>Company</th><th class="num">P/E</th><th class="num">P/S</th><th class="num">EV/EBITDA</th><th class="num">P/B</th></tr></thead><tbody>${
+          peerRow(report.company.ticker, v.pe_ttm, v.price_to_sales, v.ev_to_ebitda, v.price_to_book, true)
+        }${peerRows}</tbody></table><p class="muted">Source: Yahoo Finance, as of ${esc(this.formatDate(report.metadata.generated_at))}. n.m. = not meaningful (negative denominator).</p>`
+      : '';
+    const eq = report.earnings_quality;
+    const eqRows = [
+      eq.accruals_ratio != null
+        ? `<tr><td>Accruals ratio (lower is better)</td><td class="num">${esc(eq.accruals_ratio.toFixed(2))}%</td></tr>`
+        : '',
+      eq.cash_conversion != null
+        ? `<tr><td>Cash conversion (OCF / net income)</td><td class="num">${esc(eq.cash_conversion.toFixed(2))}x</td></tr>`
+        : '',
+    ].join('');
+    const eqBody = [
+      `<p><strong>Quality label:</strong> ${esc(eq.quality_label || 'Not assessed')}</p>`,
+      eqRows ? `<table><tbody>${eqRows}</tbody></table>` : '',
+      eq.flags.length ? list(eq.flags) : '',
+      eq.commentary.length ? claims(eq.commentary) : '',
+    ].join('');
     const risks = report.risk_matrix
       .map((risk) => `
         <article class="risk risk-${esc(risk.severity)}">
@@ -918,14 +975,61 @@ export class ReportViewComponent {
             <h3>${esc(risk.title)}</h3>
             <span>${esc(risk.severity)} impact</span><span>${esc(risk.likelihood)} probability</span>
           </div>
-          ${claims(risk.claims)}
-          <p><strong>Mitigation:</strong> ${esc(risk.mitigation)}</p>
-          <p><strong>Monitoring metrics:</strong> ${esc((risk.monitoring_metrics ?? []).join('; ') || 'Data unavailable or unverifiable.')}</p>
+          ${risk.claims.length ? claims(risk.claims) : ''}
+          <p><strong>Mitigation &amp; monitoring:</strong> ${esc(risk.mitigation)}</p>
+          <p><strong>Monitoring metrics:</strong> ${esc((risk.monitoring_metrics ?? []).join('; ') || '—')}</p>
         </article>`)
       .join('');
+    // Scorecard with per-dimension rationale so every score is auditable.
+    const dimensionRows = (report.scorecard?.dimensions ?? [])
+      .map((dim: { name?: string; score?: number; rationale?: string }) =>
+        `<tr><td>${esc(dim.name)}</td><td class="num">${esc(dim.score)}/5</td><td>${esc(dim.rationale || '')}</td></tr>`)
+      .join('');
+    const dimensionTable = dimensionRows
+      ? `<h3>Scorecard dimensions and rationale</h3><table><thead><tr><th>Dimension</th><th class="num">Score</th><th>Rationale</th></tr></thead><tbody>${dimensionRows}</tbody></table>`
+      : '';
     const scoreRows = Object.entries(report.quality_checks.final_scorecard ?? {})
       .map(([key, value]) => `<tr><td>${esc(key)}</td><td class="num">${esc(value)}</td></tr>`)
       .join('');
+    const warnings = report.metadata.warnings ?? [];
+    const qaAppendix = warnings.length
+      ? `<section><h2>Appendix — Pipeline QA Log</h2><p class="muted">Internal verification notes (pipeline errors, dropped claims, budget events). Not part of the investment analysis.</p>${list(warnings)}</section>`
+      : '';
+    const partialBanner = report.metadata.partial
+      ? `<div style="border:1px solid var(--amber); border-left-width:5px; background:#fdf6e7; border-radius:6px; padding:12px 16px; margin:0 0 24px;">
+          <strong style="color:var(--amber); letter-spacing:.08em;">⚠ PARTIAL RUN</strong> —
+          prose generation did not fully complete this run; sections were built from deterministic
+          data only. Directional rating authority is capped (see the Pipeline QA Log appendix).
+        </div>`
+      : '';
+
+    // Collapse empty sections into one banner instead of repeated dead ends.
+    const omitted: string[] = [];
+    const sectionOrEmpty = (title: string, body: string, hasContent: boolean): string => {
+      if (!hasContent) {
+        omitted.push(title);
+        return '';
+      }
+      return `<section><h2>${esc(title)}</h2>${body}</section>`;
+    };
+    const execSection = sectionOrEmpty('Executive Summary', claims(report.executive_summary), report.executive_summary.length > 0);
+    const bizSection = sectionOrEmpty('Business Overview', claims(report.business_overview), report.business_overview.length > 0);
+    const devSection = sectionOrEmpty('Recent Developments', claims(report.recent_developments), report.recent_developments.length > 0);
+    const redSection = sectionOrEmpty(
+      'Red Flags',
+      claims(report.red_flags) +
+        '<p class="muted">Scope: flags are drawn from the checks that executed this run (accruals, liquidity, insider activity when data is available). See Data Gaps for checks that could not run.</p>',
+      report.red_flags.length > 0,
+    );
+    const finCommentary = report.financial_health.commentary.length ? claims(report.financial_health.commentary) : '';
+    const valCommentary = report.valuation.commentary.length ? claims(report.valuation.commentary) : '';
+    const omittedBanner = omitted.length
+      ? `<div style="border:1px solid var(--line); border-left:4px solid var(--muted); background:var(--soft); border-radius:6px; padding:10px 16px; margin:0 0 8px;">
+          <strong>Sections omitted this run:</strong> ${omitted.map((s) => esc(s)).join(' · ')} —
+          no verified content was produced for them. The Data Gaps section and Pipeline QA Log
+          state whether that reflects missing public data or a pipeline failure.
+        </div>`
+      : '';
 
     return `<!doctype html>
 <html lang="en">
@@ -983,29 +1087,61 @@ export class ReportViewComponent {
       <div class="card"><label>Horizon</label><b>${esc(report.institutional_summary.investment_horizon)}</b></div>
       <div class="card"><label>Expected Return</label><b>${esc(report.institutional_summary.expected_return_range)}</b></div>
     </div>
-
-    <section><h2>Executive Summary</h2>${claims(report.executive_summary)}</section>
+    <p class="muted" style="margin:-18px 0 24px; font-size:12px;">${esc(report.quality_checks.rating_scale || '')}</p>
+    ${partialBanner}
+    ${omittedBanner}
+    ${execSection}
     <section class="grid-2"><div><h2>Key Bull Thesis</h2>${list(report.institutional_summary.key_bull_thesis)}</div><div><h2>Key Bear Thesis</h2>${list(report.institutional_summary.key_bear_thesis)}</div></section>
     <section class="grid-2"><div><h2>Top Catalysts</h2>${list(report.institutional_summary.top_catalysts)}</div><div><h2>Top Risks</h2>${list(report.institutional_summary.top_risks)}</div></section>
-    <section><h2>Business Overview</h2>${claims(report.business_overview)}</section>
-    <section><h2>Financial Analysis</h2><table><thead><tr><th>Metric</th><th class="num">Value</th><th>Period</th></tr></thead><tbody>${metrics}</tbody></table>${claims(report.financial_health.commentary)}</section>
-    <section><h2>Valuation</h2><table><tbody>${valuationRows || '<tr><td>Data unavailable or unverifiable.</td><td></td></tr>'}</tbody></table>${claims(report.valuation.commentary)}</section>
-    <section><h2>Earnings Quality</h2><p><strong>Quality label:</strong> ${esc(report.earnings_quality.quality_label || 'Data unavailable or unverifiable.')}</p>${claims(report.earnings_quality.commentary)}${list(report.earnings_quality.flags)}</section>
-    <section><h2>Risk Matrix</h2>${risks || '<p class="muted">Data unavailable or unverifiable.</p>'}</section>
-    <section><h2>Recent Developments</h2>${claims(report.recent_developments)}</section>
-    <section><h2>Red Flags</h2>${claims(report.red_flags)}</section>
+    ${bizSection}
+    <section><h2>Financial Analysis</h2><table><thead><tr><th>Metric</th><th class="num">Value</th><th>Period</th></tr></thead><tbody>${metrics}</tbody></table>${finCommentary}</section>
+    <section><h2>Valuation</h2><table><tbody>${valuationRows || '<tr><td>Core valuation data unavailable this run.</td><td></td></tr>'}</tbody></table>${targetLine}${peersTable}${valCommentary}</section>
+    <section><h2>Earnings Quality</h2>${eqBody}</section>
+    <section><h2>Risk Matrix</h2>${risks || '<p class="muted">No verified or structural risks were produced this run — treat as a data gap, not an absence of risk.</p>'}</section>
+    ${devSection}
+    ${redSection}
     <section><h2>Investment Thesis</h2><div class="grid-2"><div><h3>Bull Case</h3>${list(report.investment_thesis.bull_case)}</div><div><h3>Bear Case</h3>${list(report.investment_thesis.bear_case)}</div></div><p><strong>Probability-weighted outcome:</strong> ${esc(report.investment_thesis.probability_weighted_outcome)}</p></section>
     <section><h2>Management Questions</h2>${list(report.management_questions)}</section>
-    <section><h2>Data Gaps and Quality Checks</h2>${list(report.data_gaps)}<p>${esc(report.quality_checks.claim_verification)}</p><table><tbody>${scoreRows}</tbody></table></section>
-    <footer>Free-source policy: ${esc(report.quality_checks.source_policy )} | Run ${esc(report.metadata.run_id )} | ${esc(report.metadata.tokens_used.toLocaleString())} tokens | $${esc(report.metadata.cost_usd.toFixed(4))}</footer>
+    <section><h2>Data Gaps and Quality Checks</h2>${list(report.data_gaps, 'None — all sources were available.')}<p>${esc(report.quality_checks.claim_verification)}</p>${dimensionTable}<table><tbody>${scoreRows}</tbody></table></section>
+    ${qaAppendix}
+    <footer>Free-source policy: ${esc(report.quality_checks.source_policy )} | ${esc(report.quality_checks.rating_scale || '')} | Run ${esc(report.metadata.run_id )} | ${esc(report.metadata.tokens_used.toLocaleString())} tokens | $${esc(report.metadata.cost_usd.toFixed(4))}</footer>
   </main>
 </body>
 </html>`;
   }
 
+  /** Map an opaque chunk/metric id to a human-readable source reference. */
+  private sourceLabel(source: string): string {
+    const synthetic: Record<string, string> = {
+      mkt_snapshot: 'Market data (Yahoo Finance)',
+      mkt_news: 'News (Google News RSS)',
+      mkt_insiders: 'Insider transactions (SEC Form 4 via Yahoo Finance)',
+    };
+    if (synthetic[source]) return synthetic[source];
+    const chunk = this.evidenceById()[source];
+    if (chunk) {
+      const kind = chunk.form_type?.toLowerCase() ?? '';
+      if (kind === 'news') return `News article (${chunk.section || 'Google News RSS'})`;
+      if (kind === 'market') return 'Market data (Yahoo Finance)';
+      if (kind === 'insider') return 'Insider transactions (SEC Form 4)';
+      const parts = [chunk.form_type?.toUpperCase(), chunk.fiscal_period, chunk.section]
+        .filter(Boolean)
+        .join(' · ');
+      return parts ? `SEC filing: ${parts}` : source;
+    }
+    if (source.startsWith('mkt_news_')) return 'News article (Google News RSS)';
+    return `metric: ${source}`;
+  }
+
   private sourceBadges(claim: Claim): string {
-    const sources = [...claim.citation_chunk_ids, ...claim.metric_ids];
-    return sources.length ? `<span class="sources">Sources: ${sources.map((source) => this.escapeHtml(source)).join(', ')}</span>` : '';
+    const labels = [
+      ...claim.citation_chunk_ids.map((id) => this.sourceLabel(id)),
+      ...claim.metric_ids.map((id) => `metric: ${id}`),
+    ];
+    const unique = [...new Set(labels)];
+    return unique.length
+      ? `<span class="sources">Sources: ${unique.map((label) => this.escapeHtml(label)).join(' | ')}</span>`
+      : '';
   }
 
   private escapeHtml(value: string): string {

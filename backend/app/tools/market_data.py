@@ -62,6 +62,22 @@ def get_snapshot(ticker: str) -> MarketSnapshot:
         low_52w = float(closes.min())
 
     recommendation = str(info.get("recommendationKey") or "").lower()
+
+    # Short interest: compute from raw counts so the denominator is explicit.
+    # yfinance's pre-computed shortPercentOfFloat has repeatedly disagreed with
+    # sharesShort / floatShares (observed ~2x off); trust the raw counts.
+    shares_short = _info_float(info, "sharesShort")
+    float_shares = _info_float(info, "floatShares")
+    if shares_short and float_shares and float_shares > 0:
+        short_pct_float: float | None = shares_short / float_shares
+    else:
+        short_pct_float = _info_float(info, "shortPercentOfFloat")
+    short_date_raw = info.get("dateShortInterest")
+    short_interest_date = ""
+    if isinstance(short_date_raw, (int, float)) and short_date_raw > 0:
+        from datetime import UTC, datetime as _dt
+
+        short_interest_date = _dt.fromtimestamp(int(short_date_raw), tz=UTC).strftime("%Y-%m-%d")
     officers: list[dict[str, str | int | float | None]] = []
     for officer in cast("list[dict[str, Any]]", info.get("companyOfficers") or [])[:8]:
         officers.append(
@@ -99,11 +115,15 @@ def get_snapshot(ticker: str) -> MarketSnapshot:
         target_low=_info_float(info, "targetLowPrice"),
         num_analysts=_info_int(info, "numberOfAnalystOpinions"),
         # Short interest
-        short_percent_float=_info_float(info, "shortPercentOfFloat"),
+        short_percent_float=short_pct_float,
         short_ratio=_info_float(info, "shortRatio"),
+        shares_short=shares_short,
+        float_shares=float_shares,
+        short_interest_date=short_interest_date,
         # Dividends
         dividend_yield=_info_float(info, "dividendYield"),
         payout_ratio=_info_float(info, "payoutRatio"),
+        business_summary=str(info.get("longBusinessSummary") or ""),
     )
 
 

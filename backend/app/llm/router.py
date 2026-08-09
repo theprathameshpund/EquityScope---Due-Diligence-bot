@@ -81,6 +81,18 @@ class RateLimitPacer:
             )
             time.sleep(wait)
 
+    def refund(self, estimated_tokens: int) -> None:
+        """Remove a reserved slot after the provider rejected the request
+        outright (413 request-too-large) — no tokens were actually consumed,
+        so the failed attempt must not stall the next one for a minute."""
+        if self.rpm <= 0 and self.tpm <= 0:
+            return
+        with self._lock:
+            for i in range(len(self._events) - 1, -1, -1):
+                if self._events[i][1] == estimated_tokens:
+                    del self._events[i]
+                    return
+
 
 _pacers: dict[tuple[str, str], RateLimitPacer] = {}
 _pacers_lock = threading.Lock()
@@ -154,13 +166,41 @@ def load_prompt(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# Reasoning models generate <think>...</think> tokens that break Groq's
+# server-side JSON validation when response_format={"type":"json_object"} is set.
+# Match by lowercased substring so variant names (qwen3-32b, qwen/qwen3-32b, etc.) all match.
+# gpt-oss: OpenAI's open-source reasoning variants served via Groq also emit thinking tokens.
+# o1: OpenAI o1-family models are reasoning models.
+_REASONING_MODEL_SUBSTRINGS = (
+    "qwen",
+    "deepseek-r1",
+    "deepseek/r1",
+    "r1-",
+    "gpt-oss",   # openai/gpt-oss-120b and variants — emit <think> blocks via Groq
+    "o1-",       # openai o1-mini, o1-preview, o1 — reasoning models
+)
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model is a chain-of-thought reasoning model that emits
+    <think> tokens before the final answer."""
+    m = model.lower()
+    return any(sub in m for sub in _REASONING_MODEL_SUBSTRINGS)
+
+
 def _is_quota_exhausted(exc: BaseException) -> bool:
     """Provider quota errors that retrying cannot fix inside one run -
-    daily token caps (TPD) or requests too large for the per-minute window."""
+    daily/minute token caps. Rotating to another API key CAN help here."""
     message = str(exc)
-    return "rate_limit_exceeded" in message or "Error code: 429" in message or (
-        "Error code: 413" in message
-    )
+    return "rate_limit_exceeded" in message or "Error code: 429" in message
+
+
+def _is_request_too_large(exc: BaseException) -> bool:
+    """A single request that exceeds the model tier's structural per-request
+    ceiling (413). Every org has the same limit, so key rotation can never
+    fix it — the request must be shrunk or routed to a bigger-TPM tier."""
+    message = str(exc)
+    return "Error code: 413" in message or "Request too large" in message
 
 
 def _quota_cooldown_s(exc: BaseException) -> float:
@@ -179,6 +219,10 @@ _smart_fallback_lock = threading.Lock()
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    # Oversized requests fail identically on every retry — never retry them
+    # verbatim; the caller must shrink the request or change tier instead.
+    if _is_request_too_large(exc):
+        return False
     name = type(exc).__name__
     return name in {
         "RateLimitError",
@@ -191,6 +235,37 @@ def _is_retryable(exc: BaseException) -> bool:
         "ServiceUnavailableError",
         "OverloadedError",
     }
+
+
+def _tier_tpm(provider: str, price_tier: str) -> int:
+    if provider != "groq":
+        return 0
+    return settings.groq_tpm_fast if price_tier == "fast" else settings.groq_tpm_smart
+
+
+def _clamp_max_tokens_to_tpm(
+    provider: str, price_tier: str, input_estimate: int, max_tokens: int
+) -> int:
+    """Cap the output budget so input + output fits the tier's per-minute
+    token ceiling. Without this, retry logic that doubles max_tokens produces
+    requests that 413 on every key (the limit is structural per org)."""
+    tpm = _tier_tpm(provider, price_tier)
+    if tpm <= 0:
+        return max_tokens
+    headroom = tpm - input_estimate - 64  # small margin for provider-side counting
+    if headroom >= max_tokens:
+        return max_tokens
+    clamped = max(256, headroom)
+    if clamped < max_tokens:
+        log.info(
+            "llm_max_tokens_clamped_to_tpm",
+            tier=price_tier,
+            tpm=tpm,
+            input_estimate=input_estimate,
+            requested=max_tokens,
+            clamped=clamped,
+        )
+    return min(max_tokens, clamped)
 
 
 def _route(tier: TaskTier) -> tuple[str, str, str]:
@@ -254,10 +329,13 @@ class LLMRouter:
             with _smart_fallback_lock:
                 if time.monotonic() < _smart_fallback_until:
                     provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
-        # Conservative estimate: full prompt plus the entire output allowance.
-        estimated_tokens = _approx_tokens(system + user) + max_tokens
+        # Clamp output so a single request always fits the tier's TPM ceiling,
+        # then estimate conservatively: full prompt plus the output allowance.
+        input_estimate = _approx_tokens(system + user)
+        max_tokens = _clamp_max_tokens_to_tpm(provider, price_tier, input_estimate, max_tokens)
+        estimated_tokens = input_estimate + max_tokens
 
-        def _paced_call(prov: str, mdl: str, tier_name: str) -> tuple[str, int, int]:
+        def _paced_call(prov: str, mdl: str, tier_name: str, out_budget: int) -> tuple[str, int, int]:
             @retry(
                 stop=stop_after_attempt(settings.llm_max_retries + 1),
                 wait=wait_exponential(multiplier=1, max=20),
@@ -265,23 +343,33 @@ class LLMRouter:
                 reraise=True,
             )
             def _call() -> tuple[str, int, int]:
-                _get_pacer(prov, tier_name).acquire(estimated_tokens)
-                if prov == "anthropic":
-                    return self._call_anthropic(mdl, system, user, max_tokens, temperature)
-                return self._call_groq(mdl, system, user, json_mode, max_tokens, temperature)
+                pacer = _get_pacer(prov, tier_name)
+                pacer.acquire(estimated_tokens)
+                try:
+                    if prov == "anthropic":
+                        return self._call_anthropic(mdl, system, user, out_budget, temperature)
+                    return self._call_groq(mdl, system, user, json_mode, out_budget, temperature)
+                except Exception as exc:
+                    if _is_request_too_large(exc):
+                        # The provider rejected it outright — nothing was
+                        # consumed, so free the pacer slot immediately.
+                        pacer.refund(estimated_tokens)
+                    raise
 
             return _call()
 
         try:
-            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier, max_tokens)
         except Exception as exc:
-            # Daily-quota exhaustion on the smart Groq model cannot be waited
-            # out within a run - degrade to the fast model (separate, much
-            # larger daily quota) rather than losing the report prose.
+            # Two rescuable cases when the smart Groq model fails:
+            #  - quota exhaustion (429/TPD): the fast model has a separate,
+            #    much larger quota;
+            #  - request too large (413): the fast tier's TPM ceiling is ~3x
+            #    higher, so the same request usually fits there.
             can_fall_back = (
                 provider == "groq"
                 and model != settings.groq_model_fast
-                and _is_quota_exhausted(exc)
+                and (_is_quota_exhausted(exc) or _is_request_too_large(exc))
             )
             if not can_fall_back:
                 raise
@@ -296,10 +384,15 @@ class LLMRouter:
                 tier=tier,
                 model=model,
                 cooldown_s=cooldown,
+                reason="request_too_large" if _is_request_too_large(exc) else "quota",
                 error=str(exc)[:200],
             )
             provider, model, price_tier = "groq", settings.groq_model_fast, "fast"
-            text, in_tok, out_tok = _paced_call(provider, model, price_tier)
+            # Re-clamp for the fast tier's (larger) TPM ceiling.
+            fallback_max_tokens = _clamp_max_tokens_to_tpm(
+                provider, price_tier, input_estimate, max_tokens
+            )
+            text, in_tok, out_tok = _paced_call(provider, model, price_tier, fallback_max_tokens)
         price_in, price_out = settings.model_price_per_million(provider, price_tier)
         cost = in_tok / 1_000_000 * price_in + out_tok / 1_000_000 * price_out
         self.tracker.add(in_tok, out_tok, cost)
@@ -344,6 +437,20 @@ class LLMRouter:
             client = self._groq_client(keys[key_index])
             assert isinstance(client, Groq)
             try:
+                # Reasoning models (Qwen3, DeepSeek-R1) emit <think> tokens
+                # before the final answer. Groq's server-side JSON validation
+                # treats the full output — thinking tokens included — as JSON
+                # and returns json_validate_failed (400). Skip json_object mode
+                # for these models; the prompt already instructs JSON output and
+                # _extract_json handles stripping the thinking block client-side.
+                use_json_mode = json_mode and not _is_reasoning_model(model)
+                # Build kwargs conditionally: omit response_format entirely when
+                # not needed. The Groq SDK uses a NOT_GIVEN sentinel internally;
+                # explicitly passing None sends "response_format": null in the
+                # request body, which some models reject with a 400 error.
+                extra: dict = {}
+                if use_json_mode:
+                    extra["response_format"] = {"type": "json_object"}
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
@@ -352,7 +459,7 @@ class LLMRouter:
                     ],
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    response_format={"type": "json_object"} if json_mode else None,
+                    **extra,
                 )
             except Exception as exc:
                 if not _is_quota_exhausted(exc) or offset == len(keys) - 1:
@@ -370,8 +477,16 @@ class LLMRouter:
                 continue
             text = response.choices[0].message.content or ""
             usage = response.usage
-            in_tok = usage.prompt_tokens if usage else _approx_tokens(system + user)
-            out_tok = usage.completion_tokens if usage else _approx_tokens(text)
+            in_tok = (
+                usage.prompt_tokens
+                if usage and usage.prompt_tokens is not None
+                else _approx_tokens(system + user)
+            )
+            out_tok = (
+                usage.completion_tokens
+                if usage and usage.completion_tokens is not None
+                else _approx_tokens(text)
+            )
             return text, in_tok, out_tok
 
         assert last_quota_error is not None
@@ -438,13 +553,35 @@ class LLMRouter:
                 log.info("llm_call_failed", attempt=attempt, error=msg[:200])
                 if "413" in msg or "Payload Too Large" in msg:
                     log.warning("llm_payload_too_large", attempt=attempt)
-                    # first fallback: reduce tokens and remove schema from system prompt
+                    # First fallback: reduce input pressure and remove the full schema from the prompt.
                     max_tokens = max(128, max_tokens // 2)
                     system_full = (
                         f"{system}\n\nRespond ONLY with a JSON object matching the required schema (no markdown fences, no commentary)."
                     )
-                    # try next attempt
                     last_error = "413 Payload Too Large"
+                    continue
+                json_mode_failure = "json_validate_failed" in msg or "Failed to generate JSON" in msg
+                if json_mode_failure and attempt < settings.llm_max_retries:
+                    token_limited = "max completion tokens" in msg
+                    new_max_tokens = (
+                        min(max(max_tokens * 2, max_tokens + 512), 4096)
+                        if token_limited
+                        else max_tokens
+                    )
+                    log.warning(
+                        "llm_json_generation_retry",
+                        attempt=attempt,
+                        old_max_tokens=max_tokens,
+                        new_max_tokens=new_max_tokens,
+                        token_limited=token_limited,
+                    )
+                    max_tokens = new_max_tokens
+                    system_full = (
+                        f"{system}\n\nRespond ONLY with one valid JSON object matching the required schema. "
+                        "The first character must be { and the last character must be }. "
+                        "Do not return a bare array, markdown fences, commentary, or extra text."
+                    )
+                    last_error = "provider rejected invalid JSON object"
                     continue
                 raise
             try:
@@ -468,8 +605,12 @@ class LLMRouter:
 
 
 def _extract_json(text: str) -> str:
-    """Strip markdown fences / pre-amble around a JSON object."""
+    """Strip markdown fences, thinking blocks, and pre-amble around a JSON object."""
     stripped = text.strip()
+    # Reasoning models (Qwen3, DeepSeek-R1) wrap their thinking in <think>...</think>.
+    # Strip those blocks first so the JSON parser only sees the final answer.
+    import re as _re
+    stripped = _re.sub(r"<think>[\s\S]*?</think>", "", stripped, flags=_re.IGNORECASE).strip()
     # Fast path: starts with a JSON object
     if stripped.startswith("{"):
         # Find the first balanced JSON object to avoid greedy regex issues

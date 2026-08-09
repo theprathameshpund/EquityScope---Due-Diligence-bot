@@ -1,4 +1,4 @@
-﻿"""Ingestion pipeline: fetch filings → parse → chunk → embed → upsert to Qdrant.
+"""Ingestion pipeline: fetch filings → parse → chunk → embed → upsert to Qdrant.
 
 CLI:  python -m app.rag.ingestion AAPL
 """
@@ -31,17 +31,23 @@ log = get_logger(__name__)
 def get_qdrant_client() -> QdrantClient:
     if settings.runtime_storage == "local":
         settings.qdrant_local_path.mkdir(parents=True, exist_ok=True)
+        log.info("qdrant_client_local", path=str(settings.qdrant_local_path))
         return QdrantClient(path=str(settings.qdrant_local_path))
+    log.info("qdrant_client_remote", url=settings.qdrant_url)
     return QdrantClient(url=settings.qdrant_url)
 
 
 def ensure_collection(client: QdrantClient) -> None:
+    log.info("qdrant_collection_check", collection=settings.qdrant_collection)
     if not client.collection_exists(settings.qdrant_collection):
+        log.info("qdrant_collection_create_start", collection=settings.qdrant_collection)
         client.create_collection(
             collection_name=settings.qdrant_collection,
             vectors_config=VectorParams(size=embedding_dim(), distance=Distance.COSINE),
         )
         log.info("qdrant_collection_created", collection=settings.qdrant_collection)
+    else:
+        log.info("qdrant_collection_exists", collection=settings.qdrant_collection)
 
 
 def _point_id(chunk_id: str) -> str:
@@ -58,14 +64,28 @@ def upsert_chunks(
     progress: callable | None = None,
 ) -> None:
     if not chunks:
+        log.info("upsert_chunks_skip", reason="no_chunks")
         return
 
+    log.info(
+        "upsert_chunks_start",
+        total_chunks=len(chunks),
+        upsert_batch_size=upsert_batch_size,
+        embed_batch_size=embed_batch_size,
+    )
     embedded_count = 0
     upserted_count = 0
     total = len(chunks)
 
-    for i in range(0, total, upsert_batch_size):
+    for batch_number, i in enumerate(range(0, total, upsert_batch_size), 1):
         batch = chunks[i : i + upsert_batch_size]
+        log.info(
+            "upsert_batch_start",
+            batch=batch_number,
+            chunk_start=i + 1,
+            chunk_end=i + len(batch),
+            total_chunks=total,
+        )
         if progress is not None:
             progress(f"Embedding chunks {embedded_count + 1}-{embedded_count + len(batch)} of {total}…")
 
@@ -102,6 +122,14 @@ def upsert_chunks(
         )
         if progress is not None:
             progress(f"Vector store updated for {upserted_count}/{total} chunks.")
+        log.info(
+            "upsert_batch_end",
+            batch=batch_number,
+            upserted=upserted_count,
+            total_chunks=total,
+        )
+
+    log.info("upsert_chunks_complete", total_chunks=total, upserted=upserted_count)
 
 
 _MIN_INDEXED_CHUNKS = 10  # below this threshold → treat as un-indexed and re-ingest
@@ -140,25 +168,48 @@ def ingest_company(query: str, force: bool = False, run_id: str = "") -> tuple[C
         if run_id:
             publish_event(run_id, "ingest_check", "start", msg)
 
+    log.info("ingest_company_start", query=query, force=force)
     edgar = EdgarClient()
+    log.info("company_resolve_start", query=query)
     identity = edgar.resolve_company(query)
+    log.info("company_resolve_end", ticker=identity.ticker, cik=identity.cik, name=identity.name)
 
-    if not force and is_company_indexed(identity.ticker):
-        log.info("company_already_indexed", ticker=identity.ticker)
-        return identity, 0
+    if not force:
+        log.info("index_check_start", ticker=identity.ticker)
+        indexed = is_company_indexed(identity.ticker)
+        log.info("index_check_end", ticker=identity.ticker, indexed=indexed)
+        if indexed:
+            log.info("company_already_indexed", ticker=identity.ticker)
+            return identity, 0
 
+    log.info("filings_list_start", ticker=identity.ticker, cik=identity.cik)
     filings = edgar.list_target_filings(identity.cik)
+    log.info("filings_list_end", ticker=identity.ticker, count=len(filings))
     all_chunks: list[ChunkRecord] = []
     for i, filing in enumerate(filings, 1):
         _progress(f"Downloading filing {i}/{len(filings)}: {filing.form} {filing.report_date or filing.filing_date}")
+        log.info(
+            "filing_download_start",
+            ticker=identity.ticker,
+            index=i,
+            total=len(filings),
+            form=filing.form,
+            accession=filing.accession,
+        )
         try:
             path = edgar.download_filing(identity.ticker, filing)
+            log.info("filing_read_start", path=str(path), accession=filing.accession)
             html = path.read_text(encoding="utf-8", errors="replace")
+            log.info("filing_read_end", accession=filing.accession, bytes=len(html))
         except Exception as exc:
             log.warning("filing_download_failed", accession=filing.accession, error=str(exc))
             continue
+        log.info("filing_parse_start", accession=filing.accession, form=filing.form)
         sections = parse_filing(html, filing.form)
+        log.info("filing_parse_end", accession=filing.accession, sections=len(sections))
         period = (filing.report_date or filing.filing_date).isoformat()
+        before_chunks = len(all_chunks)
+        log.info("filing_chunk_start", accession=filing.accession, sections=len(sections))
         for section in sections:
             all_chunks.extend(
                 chunk_section(
@@ -171,6 +222,13 @@ def ingest_company(query: str, force: bool = False, run_id: str = "") -> tuple[C
                     accession=filing.accession,
                 )
             )
+        chunks_added = len(all_chunks) - before_chunks
+        log.info(
+            "filing_chunk_end",
+            accession=filing.accession,
+            chunks_added=chunks_added,
+            total_chunks=len(all_chunks),
+        )
         log.info(
             "filing_parsed",
             accession=filing.accession,
@@ -179,8 +237,10 @@ def ingest_company(query: str, force: bool = False, run_id: str = "") -> tuple[C
         )
 
     _progress(f"Embedding {len(all_chunks)} chunks in batches…")
+    log.info("vector_store_prepare_start", ticker=identity.ticker, chunks=len(all_chunks))
     client = get_qdrant_client()
     ensure_collection(client)
+    log.info("vector_store_prepare_end", ticker=identity.ticker)
     upsert_chunks(client, all_chunks, progress=_progress)
     log.info("ingestion_complete", ticker=identity.ticker, chunks=len(all_chunks))
     edgar.close()

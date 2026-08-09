@@ -75,15 +75,20 @@ class MarketSnapshot(BaseModel):
     target_high: float | None = None
     target_low: float | None = None
     num_analysts: int = 0
-    # Short interest
-    short_percent_float: float | None = None  # % of float sold short
+    # Short interest — pct computed from shares_short / float_shares when both
+    # exist so the denominator is explicit and auditable.
+    short_percent_float: float | None = None  # fraction of float sold short (0-1)
     short_ratio: float | None = None           # days to cover
+    shares_short: float | None = None          # raw short share count
+    float_shares: float | None = None          # raw float share count (denominator)
+    short_interest_date: str = ""              # as-of date of the short data
     # Dividends
     dividend_yield: float | None = None
     payout_ratio: float | None = None
     peers: list[PeerMultiple] = Field(default_factory=list)
     macro_notes: list[str] = Field(default_factory=list)
     summary: str = ""
+    business_summary: str = ""  # factual longBusinessSummary from Yahoo Finance
 
 
 class InsiderTransaction(BaseModel):

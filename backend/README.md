@@ -174,6 +174,26 @@ The legacy Streamlit UI remains available:
 CI (`.github/workflows/ci.yml`) runs all of the above on every PR with mocked
 LLMs and recorded EDGAR fixtures — no secrets needed.
 
+## Features
+
+✅ Multi-Agent AI
+
+✅ Agentic RAG
+
+✅ Citation Verification
+
+✅ Financial Metrics
+
+✅ Live Timeline
+
+✅ Report Generation
+
+✅ Evaluation Framework
+
+✅ Resume Support
+
+✅ Cost Tracking
+
 ## Evals
 
 All three run against a saved report JSON (`data/reports/<run_id>.json`):

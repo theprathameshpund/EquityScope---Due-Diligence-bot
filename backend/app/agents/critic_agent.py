@@ -77,6 +77,21 @@ def _synthetic_market_evidence(state: AgentState) -> list[RetrievedEvidence]:
                 score=0.8,
             )
         )
+        # Mirror the writer's per-article chunks so mkt_news_N citations verify.
+        for i, item in enumerate(state.news.items[:3]):
+            pub = f" ({item.published_at.strftime('%Y-%m-%d')})" if item.published_at else ""
+            chunks.append(
+                RetrievedEvidence(
+                    chunk_id=f"{_MARKET_CHUNK_PREFIX}news_{i}",
+                    text=f"[{item.sentiment.upper()}] {item.title}{pub}"
+                         + (f" — {item.snippet[:300]}" if item.snippet else ""),
+                    source_url=item.url,
+                    form_type="news",
+                    fiscal_period="current",
+                    section=f"News article {i + 1}",
+                    score=0.8,
+                )
+            )
 
     if state.insider_activity and state.insider_activity.available:
         ia = state.insider_activity
@@ -213,6 +228,7 @@ def _verify_claim(
 
 def critic_node(state: AgentState) -> dict[str, Any]:
     """LangGraph node: verify every claim in the draft report."""
+    log.info("critic_node_start", has_report=state.report is not None)
     if state.report is None:
         return {"critic_verdicts": [], "status": "critic_skipped"}
 
@@ -221,13 +237,17 @@ def critic_node(state: AgentState) -> dict[str, Any]:
         evidence_by_id[chunk.chunk_id] = chunk
     metrics = state.analysis.metrics if state.analysis else []
 
+    claims = state.report.all_claims()
+    log.info("critic_claims_start", claims=len(claims), evidence=len(evidence_by_id), metrics=len(metrics))
     verdicts: list[CriticVerdict] = []
-    for claim in state.report.all_claims():
+    for index, claim in enumerate(claims, 1):
+        log.info("critic_claim_start", index=index, total=len(claims), claim_id=claim.claim_id)
         verdict = _verify_claim(claim, evidence_by_id, metrics)
         claim.verification_status = (
             "supported" if verdict.verdict == "supported" else "unsupported"
         )
         verdicts.append(verdict)
+        log.info("critic_claim_end", index=index, total=len(claims), claim_id=claim.claim_id, verdict=verdict.verdict)
 
     n_failed = sum(1 for v in verdicts if v.verdict != "supported")
     log.info("critic_done", total=len(verdicts), failed=n_failed,

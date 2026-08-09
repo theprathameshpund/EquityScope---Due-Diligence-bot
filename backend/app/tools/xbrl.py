@@ -150,26 +150,37 @@ def parse_companyfacts(raw: dict[str, Any]) -> FinancialFacts:
 
     facts: dict[str, list[FactValue]] = {}
 
+    def _merged_alias_values(taxonomy: dict[str, Any], aliases: list[str]) -> list[FactValue]:
+        """Merge every alias by fiscal year, earlier-listed alias winning ties.
+
+        Companies switch tags between filings (e.g. Alphabet's revenue moved
+        from RevenueFromContractWithCustomerExcludingAssessedTax to Revenues
+        in its FY2025 10-K). Taking only the first alias with data silently
+        lagged the analysis by a full fiscal year — merging keeps the full
+        history AND the newest year regardless of which tag carries it.
+        """
+        merged: dict[int, FactValue] = {}
+        for alias in aliases:
+            if alias not in taxonomy:
+                continue
+            for value in _annual_values(taxonomy[alias], alias):
+                merged.setdefault(value.fiscal_year, value)
+        return sorted(merged.values(), key=lambda v: v.fiscal_year)
+
     # Pass 1: US-GAAP concepts
     for canonical, aliases in CONCEPT_ALIASES.items():
-        for alias in aliases:
-            if alias in gaap:
-                values = _annual_values(gaap[alias], alias)
-                if values:
-                    facts[canonical] = values
-                    break
+        values = _merged_alias_values(gaap, aliases)
+        if values:
+            facts[canonical] = values
 
     # Pass 2: IFRS-full concepts for any concept still missing (foreign issuers)
     if ifrs:
         for canonical, aliases in IFRS_CONCEPT_ALIASES.items():
             if canonical in facts:
                 continue  # already populated from US-GAAP
-            for alias in aliases:
-                if alias in ifrs:
-                    values = _annual_values(ifrs[alias], alias)
-                    if values:
-                        facts[canonical] = values
-                        break
+            values = _merged_alias_values(ifrs, aliases)
+            if values:
+                facts[canonical] = values
 
     log.info(
         "companyfacts_parsed",

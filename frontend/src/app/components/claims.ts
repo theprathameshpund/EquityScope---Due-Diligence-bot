@@ -10,7 +10,7 @@ import { AppIcon } from './icon';
   imports: [AppIcon],
   template: `
     @if (!claims().length) {
-      <p class="empty">No verified content for this section.</p>
+      <p class="empty">Insufficient data for this section.</p>
     }
     <ul class="claims">
       @for (claim of claims(); track claim.claim_id) {
